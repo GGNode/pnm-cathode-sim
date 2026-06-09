@@ -59,41 +59,44 @@ Khan et al. (2021), J. Electrochem. Soc. 168(7), 070534.
 import numpy as np
 
 # ===== NMC532 OCV 多项式系数 =====
-# 拟合 NMC532 半电池实验数据:
-#   x:  0.0   0.1   0.2   0.3   0.4   0.5   0.6   0.7   0.8   0.9   1.0
-#   U: 4.28  4.15  4.05  3.93  3.82  3.73  3.65  3.60  3.57  3.55  3.53
-#
-# 多项式: U(x) = a0 + a1*x + a2*x² + a3*x³ + a4*x⁴ + a5*x⁵ + a6*x⁶
-# np.polyval 按降幂排列: coeffs[0]*x^6 + coeffs[1]*x^5 + ... + coeffs[6]
+# Khan et al. Eq. 2.19, corrected against the cited NMC532/NCM523 OCP
+# source (Verma et al., JES 164 A3380, Eq. 5). Khan's rendered PDF drops
+# the leading "3" in the soc^8 coefficient, printing -5520.41099; that
+# transcription gives U(0.5) = 121 V. The cited source prints -35520.41099.
+# The independent variable is the lithium state of charge/stoichiometric
+# fraction in NMC532, i.e. soc = c_s / c_s,max, and the fit is calibrated
+# over the measured GITT voltage window rather than the whole [0, 1] domain.
 _OCV_COEFFS = [
-    6.290850,    # a6 (x^6 项系数)
-    -21.596908,  # a5 (x^5 项系数)
-    27.066679,   # a4 (x^4 项系数)
-    -14.688871,  # a3 (x^3 项系数)
-    3.689029,    # a2 (x^2 项系数)
-    -1.509975,   # a1 (x^1 项系数)
-    4.279404,    # a0 (常数项, 对应 U(x=0) ≈ 4.28 V)
+    5744.862289,
+    -35520.41099,
+    95714.29862,
+    -147364.5514,
+    142718.3782,
+    -90095.81521,
+    37061.41195,
+    -9578.599274,
+    1409.309503,
+    -85.31153081,
 ]
 
 
-def nmc532_ocv(x: float | np.ndarray) -> float | np.ndarray:
+def nmc532_ocv(soc: float | np.ndarray) -> float | np.ndarray:
     """
     计算 NMC532 的开路电压 (OCV)。
 
     对应 DERIVATION.md §2.5: "For NMC532, an empirical U(x) with
     x = c_s/c_s,max is usually preferable."
 
-    OCV 曲线特征:
-    - 单调递减: x 越大 (越嵌锂), 电压越低
-    - x=0 (空): U ≈ 4.28 V (高电压, 脱锂态)
-    - x=1 (满): U ≈ 3.53 V (低电压, 嵌锂态)
-    - 放电过程中 x 增大, U 减小
+    Implements Khan et al. Eq. 2.19 with the missing digit in the ``soc^8``
+    coefficient restored from the cited OCP source. The paper writes the
+    independent variable as ``soc_i``; the source paper defines this as the
+    state of charge of lithium in NMC523/NMC532.
 
     Parameters
     ----------
-    x : float or array
-        嵌锂度 (lithiation degree), x = c_s / c_s_max, 范围 [0, 1]。
-        x = 0: 完全脱锂 (空), x = 1: 完全嵌锂 (满)。
+    soc : float or array
+        Lithium state-of-charge/stoichiometric fraction used in Eq. 2.19,
+        soc = c_s / c_s,max.
 
     Returns
     -------
@@ -103,28 +106,19 @@ def nmc532_ocv(x: float | np.ndarray) -> float | np.ndarray:
 
     Notes
     -----
-    - 使用 np.clip 将 x 限制在 [1e-6, 1-1e-6] 以避免多项式外推。
-    - 结果被裁剪到 [3.0, 4.3] V 的物理合理范围。
-    - 参见 DERIVATION.md §6.2: "Empirical OCV fits often diverge
-      or become invalid outside calibrated x."
+    The value is not clipped so this routine remains an exact transcription
+    of the corrected Eq. 2.19. The polynomial is only physically meaningful
+    over the calibrated GITT stoichiometry window.
     """
-    x = np.asarray(x, dtype=float)
-
-    # 裁剪 x 到安全范围, 防止多项式在外推区域发散
-    x = np.clip(x, 1e-6, 1.0 - 1e-6)
-
-    # 使用 numpy 多项式求值: U = a6*x^6 + a5*x^5 + ... + a0
-    U = np.polyval(_OCV_COEFFS, x)
-
-    # 裁剪到 NMC532 的物理电压范围
-    # NMC532 的 OCV 不会低于 ~3.5V 或高于 ~4.3V vs Li/Li+
-    U = np.clip(U, 3.0, 4.3)
+    soc = np.asarray(soc, dtype=float)
+    U = np.polyval(_OCV_COEFFS, soc)
+    U = U - 0.0003 * np.exp(7.657 * (soc**115))
 
     # 标量输入返回标量
     return float(U) if U.ndim == 0 else U
 
 
-def ocv_derivative(x: float | np.ndarray) -> float | np.ndarray:
+def ocv_derivative(soc: float | np.ndarray) -> float | np.ndarray:
     """
     计算 OCV 对嵌锂度 x 的导数 dU/dx, 用于 Newton-Raphson 耦合。
 
@@ -154,17 +148,9 @@ def ocv_derivative(x: float | np.ndarray) -> float | np.ndarray:
     调用者需乘以 1/c_s_max 得到 dU/dc_s [V·m³/mol]:
         dU/dc_s = dUdx / c_s_max
     """
-    x = np.asarray(x, dtype=float)
-
-    # 裁剪到安全范围
-    x = np.clip(x, 1e-6, 1.0 - 1e-6)
-
-    # 计算多项式的导数系数
-    # 如果 U = a6*x^6 + a5*x^5 + ... + a0
-    # 则 dU/dx = 6*a6*x^5 + 5*a5*x^4 + ... + a1
+    soc = np.asarray(soc, dtype=float)
     deriv_coeffs = np.polyder(_OCV_COEFFS)
-
-    # 求导数值
-    dU = np.polyval(deriv_coeffs, x)
+    dU = np.polyval(deriv_coeffs, soc)
+    dU = dU - 0.0003 * np.exp(7.657 * (soc**115)) * 7.657 * 115.0 * soc**114
 
     return float(dU) if dU.ndim == 0 else dU

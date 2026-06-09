@@ -37,11 +37,11 @@ class TestNMC532DiffusionCoefficient:
                 f"D_s({cs}, 298K) = {D:.2e} m²/s outside expected range"
             )
 
-    def test_temperature_dependence(self):
-        """Higher temperature should generally increase D_s."""
+    def test_printed_formula_has_no_temperature_dependence(self):
+        """Table II footnote (1) D_s is concentration-dependent only."""
         D_cold = nmc532_diffusion_coefficient(24450, T=273.15)
         D_hot = nmc532_diffusion_coefficient(24450, T=333.15)
-        assert D_hot > D_cold
+        assert D_hot == pytest.approx(D_cold)
 
 
 class TestSphericalParticleDiscretization:

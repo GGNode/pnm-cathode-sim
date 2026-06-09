@@ -76,70 +76,57 @@ Khan et al. (2021), J. Electrochem. Soc. 168(7), 070534.
 import numpy as np
 
 
-def nmc532_diffusion_coefficient(c_s: float, T: float = 298.15) -> float:
+def nmc532_diffusion_coefficient(c_s: float, T: float = 303.0) -> float:
     """
     计算 NMC532 锂扩散系数 D_s(c_s, T)。
 
     对应 DERIVATION.md §2.3: "Solid lithium in NMC is neutral
     intercalated lithium. Its flux is Fickian: N_solid = -D_s(c_s,T) grad c_s."
 
-    扩散系数模型 (Arrhenius 形式):
+    Table II footnote (1) gives the concentration-dependent NMC532
+    diffusivity as a base-10 polynomial in ``soc``:
 
-        D_s = D_ref * exp(-E_a/R * (1/T - 1/T_ref)) * f(x)
+        D_s = 10^(-2319soc^10 + 6642soc^9 - 5269soc^8 - 3319soc^7
+                 + 10038soc^6 - 9806soc^5 + 5817soc^4 - 2286soc^3
+                 + 575.3soc^2 - 83.16soc - 9.292)
 
-    其中:
-    - D_ref: 参考温度下的扩散系数 [m²/s]
-    - E_a: 活化能 (activation energy) [J/mol]
-    - R: 气体常数 [J/(mol·K)]
-    - T_ref: 参考温度 [K]
-    - f(x): 浓度依赖因子, x = c_s / c_s_max
-
-    浓度依赖性:
-    - f(x) 在 x=0.5 (50% SoC) 附近达到峰值
-    - 在 x→0 和 x→1 时减小 (极端嵌锂/脱锂态)
-    - 使用 f(x) = 0.1 + 0.9 * 4x(1-x) 近似
+    ``T`` is accepted for API compatibility, but this printed correlation has
+    no temperature term.
 
     Parameters
     ----------
     c_s : float
         固相锂浓度 [mol/m³]。范围: (0, c_s_max=48900)。
     T : float
-        温度 [K]。默认 298.15 K (25°C)。
+        温度 [K]。保留以兼容调用方；论文中该固相公式不含温度项。
 
     Returns
     -------
     D_s : float
         锂扩散系数 [m²/s]。
-        典型值: ~1e-14 m²/s (298 K, 50% SoC)。
+        典型值: ~1e-15 m²/s near 50% SoC.
 
     Notes
     -----
     参见 DERIVATION.md §3.4: "For nonlinear D_s(c_s,T), K_mn^s must
     be evaluated at t^{n+1} in a fully implicit Newton solve."
     """
-    R = 8.314462  # 气体常数 [J/(mol·K)]
-
-    # 参考参数 (298.15 K, 50% SoC)
-    D_ref = 1e-14        # 参考扩散系数 [m²/s] — NMC 典型值
-    E_a = 30000.0        # 活化能 [J/mol] — 文献报道范围 20~50 kJ/mol
-    T_ref = 298.15       # 参考温度 [K]
-
-    # 计算嵌锂度 x = c_s / c_s_max
-    # NMC532 的 c_s_max = 48900 mol/m³
     c_s_max = 48900.0
-    x = np.clip(c_s / c_s_max, 0.01, 0.99)  # 裁剪到安全范围
-
-    # 浓度依赖因子 f(x)
-    # 在 x=0.5 时达到最大值 1.0, 在 x→0 和 x→1 时减小到 ~0.1
-    # 使用抛物线: 4x(1-x) 在 [0,1] 范围内为 [0,1]
-    f_cs = 0.1 + 0.9 * (4.0 * x * (1.0 - x))
-
-    # Arrhenius 温度依赖
-    # 当 T > T_ref 时, 指数为正, D_s 增大 (高温扩散更快)
-    # 当 T < T_ref 时, 指数为负, D_s 减小
-    D_s = D_ref * np.exp(-E_a / R * (1.0 / T - 1.0 / T_ref)) * f_cs
-
-    return D_s
+    soc = np.clip(c_s / c_s_max, 1e-9, 1.0 - 1e-9)
+    exponent = (
+        -2319.0 * soc**10
+        + 6642.0 * soc**9
+        - 5269.0 * soc**8
+        - 3319.0 * soc**7
+        + 10038.0 * soc**6
+        - 9806.0 * soc**5
+        + 5817.0 * soc**4
+        - 2286.0 * soc**3
+        + 575.3 * soc**2
+        - 83.16 * soc
+        - 9.292
+    )
+    return float(10.0 ** exponent)
 
 
 def discretize_spherical_particle(R_p: float, N: int) -> tuple[float, np.ndarray]:
