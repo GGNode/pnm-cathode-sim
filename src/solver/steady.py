@@ -10,6 +10,7 @@ References:
 import numpy as np
 import openpnm as op
 from scipy import sparse
+from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import spsolve
 
 from src.physics.ocv import nmc532_ocv
@@ -99,13 +100,6 @@ class SteadyStateSolver:
             sv += [self.G_s[t], self.G_s[t], -self.G_s[t], -self.G_s[t]]
         self.L_s = sparse.csr_matrix((sv, (sr, sc)), shape=(n_s, n_s))
 
-        # Interface vectors (pre-indexed to local)
-        self._ie_e = np.array([self.e_map[ie[0]] for ie in self.interfaces])
-        self._ie_s = np.array([self.s_map[ie[1]] for ie in self.interfaces])
-        self._ie_A = np.array([ie[2] for ie in self.interfaces])
-        self._ie_e_g = np.array([ie[0] for ie in self.interfaces])
-        self._ie_s_g = np.array([ie[1] for ie in self.interfaces])
-
         # Boundary sets
         x = self.coords[:, 0]
         x_min, x_max = x.min(), x.max()
@@ -118,8 +112,11 @@ class SteadyStateSolver:
         if len(self.cc_s) == 0 and n_s > 0:
             self.cc_s = np.array([int(np.argmax(x[self.s_indices]))])
 
+        self._mark_connected_components()
+        self._filter_reactive_interfaces()
+
         # Collector area: sum of throat cross-sections at collector boundary
-        cc_g = set(self.s_indices[self.cc_s])
+        cc_g = set(self.s_indices[self.active_cc_s])
         self._cc_area = 0.0
         for t in range(self.Nt):
             g1, g2 = int(conns[t, 0]), int(conns[t, 1])
@@ -128,7 +125,53 @@ class SteadyStateSolver:
         if self._cc_area == 0:
             self._cc_area = 1.0
 
-    def solve(self, I_app: float = 0.0, tol: float = 1e-8, max_iter: int = 100) -> dict:
+    def _mark_connected_components(self):
+        """Mark ionic/electronic components that can support reaction."""
+        if self.n_e:
+            n_comp_e, labels_e = connected_components(self.L_e != 0, directed=False)
+            sep_components = set(labels_e[self.sep_e]) if len(self.sep_e) else set()
+            self.active_e = np.array([label in sep_components for label in labels_e])
+        else:
+            self.active_e = np.array([], dtype=bool)
+
+        if self.n_s:
+            n_comp_s, labels_s = connected_components(self.L_s != 0, directed=False)
+            cc_components = set(labels_s[self.cc_s]) if len(self.cc_s) else set()
+            interface_components = set()
+            for e_g, s_g, _area in self.interfaces:
+                e_l = self.e_map[e_g]
+                s_l = self.s_map[s_g]
+                if self.active_e[e_l] and labels_s[s_l] in cc_components:
+                    interface_components.add(labels_s[s_l])
+            active_components = cc_components & interface_components
+            self.active_s = np.array([label in active_components for label in labels_s])
+            self.active_cc_s = np.array([i for i in self.cc_s if self.active_s[i]], dtype=int)
+        else:
+            self.active_s = np.array([], dtype=bool)
+            self.active_cc_s = np.array([], dtype=int)
+
+    def _filter_reactive_interfaces(self):
+        """Deactivate interfaces without both ionic and electronic pathways."""
+        self.reactive_interfaces = []
+        for e_g, s_g, area in self.interfaces:
+            e_l = self.e_map[e_g]
+            s_l = self.s_map[s_g]
+            if self.active_e[e_l] and self.active_s[s_l]:
+                self.reactive_interfaces.append((e_g, s_g, area))
+
+        self._ie_e = np.array(
+            [self.e_map[ie[0]] for ie in self.reactive_interfaces],
+            dtype=int,
+        )
+        self._ie_s = np.array(
+            [self.s_map[ie[1]] for ie in self.reactive_interfaces],
+            dtype=int,
+        )
+        self._ie_A = np.array([ie[2] for ie in self.reactive_interfaces], dtype=float)
+        self._ie_e_g = np.array([ie[0] for ie in self.reactive_interfaces], dtype=int)
+        self._ie_s_g = np.array([ie[1] for ie in self.reactive_interfaces], dtype=int)
+
+    def solve(self, I_app: float = 0.0, tol: float = 1e-12, max_iter: int = 100) -> dict:
         """Solve with successive-over-relaxation on the linearised BV system.
 
         Each iteration:
@@ -137,7 +180,7 @@ class SteadyStateSolver:
           3. Solve the linear system.
         """
         n_e, n_s = self.n_e, self.n_s
-        n_intf = len(self.interfaces)
+        n_intf = len(self.reactive_interfaces)
 
         # Dirichlet values
         phi_e_bc = np.zeros(n_e)
@@ -148,6 +191,8 @@ class SteadyStateSolver:
         phi_e = phi_e_bc.copy()
         phi_s = phi_s_bc.copy()
 
+        converged = False
+        iteration = 0
         for iteration in range(max_iter):
             # --- Compute BV quantities at interfaces ---
             if n_intf > 0:
@@ -217,10 +262,11 @@ class SteadyStateSolver:
                 bv_sink = g_bv * (phi_e[self._ie_e] + U_eq)
                 np.add.at(rhs_s, self._ie_s, -bv_sink)
 
-            # Applied current: positive I_app → discharge (current into solid)
+            # Applied current: positive I_app -> anodic cathode charge.
             # I_app is current density [A/m²]; multiply by collector area
             # to get current [A] per pore.
-            rhs_s[self.cc_s] -= I_app * self._cc_area / max(len(self.cc_s), 1)
+            if len(self.active_cc_s) > 0:
+                rhs_s[self.active_cc_s] -= I_app * self._cc_area / len(self.active_cc_s)
 
             # Apply Dirichlet BCs
             M_e = M_e.tolil()
@@ -229,16 +275,15 @@ class SteadyStateSolver:
                 rhs_e[i] = phi_e_bc[i]
             # Pin disconnected e-pores
             for i in range(n_e):
-                if M_e[i, :].nnz == 0:
+                if not self.active_e[i] or M_e[i, :].nnz == 0:
+                    M_e[i, :] = 0
                     M_e[i, i] = 1.0; rhs_e[i] = 0.0
             M_e = M_e.tocsr()
 
             M_s = M_s.tolil()
-            for i in self.sep_s:
-                M_s[i, :] = 0; M_s[i, i] = 1.0
-                rhs_s[i] = phi_s_bc[i]
             for i in range(n_s):
-                if M_s[i, :].nnz == 0:
+                if not self.active_s[i] or M_s[i, :].nnz == 0:
+                    M_s[i, :] = 0
                     M_s[i, i] = 1.0; rhs_s[i] = phi_s_bc[i]
             M_s = M_s.tocsr()
 
@@ -260,6 +305,7 @@ class SteadyStateSolver:
             phi_s = (1 - alpha) * phi_s + alpha * phi_s_new
 
             if max(de, ds) < tol:
+                converged = True
                 break
 
         # Build full-network output
@@ -272,23 +318,25 @@ class SteadyStateSolver:
                 phi_s_full[g] = phi_s[self.s_map[g]]
 
         # Voltage
-        if len(self.cc_s) > 0 and len(self.sep_e) > 0:
-            V_cell = float(np.mean(phi_s[self.cc_s])) - float(np.mean(phi_e[self.sep_e]))
+        voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
+        if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
+            V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
         else:
             V_cell = 0.0
 
         # I_rxn at all throats
         I_rxn_all = np.zeros(self.Nt)
+        reactive_pairs = {(e_g, s_g) for e_g, s_g, _area in self.reactive_interfaces}
         for t in range(self.Nt):
             g1, g2 = int(self.conns[t, 0]), int(self.conns[t, 1])
-            if self.e_mask[g1] and self.nmc_mask[g2]:
+            if self.e_mask[g1] and self.nmc_mask[g2] and (g1, g2) in reactive_pairs:
                 le, lnmc = self.e_map[g1], self.s_map[g2]
                 cs = self.c_s[g2]
                 U_eq = nmc532_ocv(cs / 48900.0)
                 i0 = exchange_current_density(self.k0, self.c_e[g1], cs, 48900.0)
                 eta = phi_s[lnmc] - phi_e[le] - U_eq
                 I_rxn_all[t] = butler_volmer(i0, eta, self.T)
-            elif self.nmc_mask[g1] and self.e_mask[g2]:
+            elif self.nmc_mask[g1] and self.e_mask[g2] and (g2, g1) in reactive_pairs:
                 le, lnmc = self.e_map[g2], self.s_map[g1]
                 cs = self.c_s[g1]
                 U_eq = nmc532_ocv(cs / 48900.0)
@@ -301,4 +349,6 @@ class SteadyStateSolver:
             "phi_s": phi_s_full,
             "voltage": V_cell,
             "I_rxn": I_rxn_all,
+            "iterations": iteration + 1,
+            "converged": converged,
         }

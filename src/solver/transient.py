@@ -55,11 +55,28 @@ class TransientSolver:
 
         # Steady-state solver for potentials
         self._steady = SteadyStateSolver(net, T=T, k0=k0)
+        self._filter_reactive_interfaces()
 
     def set_concentration(self, c_e: float = 1200.0, c_s: float = 24450.0):
         self.c_e[:] = c_e
         self.c_s[:] = c_s
         self._steady.set_concentration(c_e, c_s)
+
+    @property
+    def collector_area(self) -> float:
+        """Active current-collector area used to convert current density to current."""
+        return self._steady._cc_area
+
+    def discharge_capacity_coulombs(self, cs_max: float = 48900.0) -> float:
+        """Remaining cathode lithiation capacity from current state [C]."""
+        vacancies = np.maximum(cs_max - self.c_s[self.nmc_indices], 0.0)
+        return float(F * np.sum(vacancies * self._vol_s))
+
+    def current_density_for_c_rate(self, C_rate: float, cs_max: float = 48900.0) -> float:
+        """Convert positive discharge C-rate to anodic-convention current density."""
+        capacity_c = self.discharge_capacity_coulombs(cs_max=cs_max)
+        current_a = C_rate * capacity_c / 3600.0
+        return -current_a / self.collector_area
 
     def _build_diffusion_matrices(self):
         """Build diffusion Laplacian matrices for c_e and c_s."""
@@ -117,6 +134,16 @@ class TransientSolver:
                     self.e_map[g2], self.nmc_map[g1], A[t], g2, g1,
                 ))
 
+    def _filter_reactive_interfaces(self):
+        reactive_pairs = {
+            (e_g, nmc_g) for e_g, nmc_g, _area in self._steady.reactive_interfaces
+            if nmc_g in self.nmc_map
+        }
+        self._interfaces = [
+            interface for interface in self._interfaces
+            if (interface[3], interface[4]) in reactive_pairs
+        ]
+
     def step(self, dt: float, I_app: float = 0.0) -> dict:
         """Advance one time step.
 
@@ -141,8 +168,8 @@ class TransientSolver:
 
         # 2. Compute reaction rates at interfaces
         # For each e/NMC interface: I_rxn via Butler-Volmer
-        # c_e change: +I_rxn * A_intf / (F)  (Li+ consumed/produced)
-        # c_s change: -I_rxn * A_intf / (F)  (Li intercalated/deintercalated)
+        # c_e change: +I_rxn * A_intf / F  (anodic production)
+        # c_s change: -I_rxn * A_intf / F  (anodic deintercalation)
         dce_dt = np.zeros(self.n_e)
         dcs_dt = np.zeros(self.n_nmc)
 
@@ -163,25 +190,25 @@ class TransientSolver:
             eta = ps - pe - U_eq
             I_rxn = butler_volmer(i0, eta, self.T)
 
-            # Reaction source/sink
-            # I_rxn > 0: Li+ from electrolyte → solid (discharge)
-            # c_e decreases, c_s increases
+            # Reaction source/sink, anodic convention:
+            # I_rxn > 0: Li leaves solid and enters electrolyte.
+            # I_rxn < 0: discharge/lithiation consumes electrolyte Li.
             flux = I_rxn * A_intf / F  # mol/s
-            dce_dt[le] -= flux / self._vol_e[le] if self._vol_e[le] > 0 else 0.0
-            dcs_dt[ls] += flux / self._vol_s[ls] if self._vol_s[ls] > 0 else 0.0
+            dce_dt[le] += flux / self._vol_e[le] if self._vol_e[le] > 0 else 0.0
+            dcs_dt[ls] -= flux / self._vol_s[ls] if self._vol_s[ls] > 0 else 0.0
 
-        # 3. Diffusion: L_ce @ c_e and L_cs @ c_s
+        # 3. Diffusion state vectors
         c_e_local = self.c_e[self.e_indices]
         c_s_local = self.c_s[self.nmc_indices]
 
-        diff_e = self.L_ce @ c_e_local
-        diff_s = self.L_cs @ c_s_local
-
-        # 4. Time stepping: backward Euler
-        # c_new = c_old + dt * (diffusion + reaction) / volume
-        # Semi-implicit: use old concentrations for diffusion
-        c_e_new = c_e_local + dt * (diff_e / self._vol_e + dce_dt)
-        c_s_new = c_s_local + dt * (diff_s / self._vol_s + dcs_dt)
+        # 4. Time stepping: backward Euler for diffusion, explicit reaction.
+        # V (c_new - c_old) / dt = L c_new + V source
+        M_e = sparse.diags(self._vol_e / dt) - self.L_ce
+        rhs_e = (self._vol_e / dt) * c_e_local + self._vol_e * dce_dt
+        M_s = sparse.diags(self._vol_s / dt) - self.L_cs
+        rhs_s = (self._vol_s / dt) * c_s_local + self._vol_s * dcs_dt
+        c_e_new = spsolve(M_e.tocsr(), rhs_e) if self.n_e else c_e_local
+        c_s_new = spsolve(M_s.tocsr(), rhs_s) if self.n_nmc else c_s_local
 
         # Clamp to physical range
         c_e_new = np.clip(c_e_new, 1.0, 10000.0)
@@ -198,4 +225,6 @@ class TransientSolver:
             "c_s": self.c_s.copy(),
             "voltage": pot["voltage"],
             "I_rxn": pot["I_rxn"],
+            "iterations": pot["iterations"],
+            "converged": pot["converged"],
         }

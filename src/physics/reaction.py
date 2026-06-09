@@ -32,7 +32,7 @@ def butler_volmer(
     i0 : float
         Exchange current density [A/m²].
     eta : float or array
-        Overpotential [V]. Positive = anodic (discharge).
+        Overpotential [V]. Positive = anodic deintercalation/charge.
     T : float
         Temperature [K].
     alpha_a : float
