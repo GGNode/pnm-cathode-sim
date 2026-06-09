@@ -191,6 +191,30 @@ class SteadyStateSolver:
         phi_e = phi_e_bc.copy()
         phi_s = phi_s_bc.copy()
 
+        if abs(I_app) < tol:
+            phi_e_full = np.full(self.Np, np.nan)
+            phi_s_full = np.full(self.Np, np.nan)
+            for g in range(self.Np):
+                if self.e_mask[g]:
+                    phi_e_full[g] = phi_e[self.e_map[g]]
+                if self.solid_mask[g]:
+                    phi_s_full[g] = phi_s[self.s_map[g]]
+
+            voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
+            if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
+                V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
+            else:
+                V_cell = 0.0
+
+            return {
+                "phi_e": phi_e_full,
+                "phi_s": phi_s_full,
+                "voltage": V_cell,
+                "I_rxn": np.zeros(self.Nt),
+                "iterations": 0,
+                "converged": True,
+            }
+
         converged = False
         iteration = 0
         for iteration in range(max_iter):
