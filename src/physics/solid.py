@@ -1,90 +1,193 @@
-"""Solid-phase Li diffusion in NMC532 particles.
+"""
+固相锂扩散模块 (Solid-Phase Li Diffusion)
+==========================================
 
-Implements Fick's law for Li diffusion in a spherical active material particle,
-discretized using finite-volume method with uniform shells.
+物理背景
+--------
+本模块实现 NMC532 活性材料颗粒内部的锂扩散。
 
-    ∂c_s/∂t = D_s * ∇²c_s
+NMC532 颗粒中的锂扩散遵循 Fick 定律:
 
-In spherical coordinates:
+    ∂c_s/∂t = ∇·(D_s(c_s, T) ∇c_s)
+
+其中:
+- c_s: 固相锂浓度 [mol/m³]
+- D_s: 锂扩散系数 [m²/s], 依赖于 c_s 和 T
+
+在球坐标系中 (假设球形颗粒):
+
     ∂c_s/∂t = (1/r²) * ∂/∂r (r² * D_s * ∂c_s/∂r)
 
-The NMC532 diffusion coefficient D_s depends on c_s and T
-(see nmc532_diffusion_coefficient).
+扩散系数
+--------
+NMC532 的锂扩散系数 D_s 与浓度和温度有关:
 
-References:
-    Khan et al. (2021), J. Electrochem. Soc. 168(7), 070534.
+    D_s(c_s, T) = D_ref * exp(-E_a/R * (1/T - 1/T_ref)) * f(x)
+
+其中 x = c_s / c_s_max, f(x) 描述浓度依赖性。
+
+典型值: D_ref ~ 1e-14 m²/s (298 K, 50% SoC)
+        E_a ~ 30 kJ/mol (活化能)
+        文献报道范围: 1e-16 ~ 1e-12 m²/s
+
+有限体积离散化
+--------------
+将球形颗粒离散为 N 个同心壳层 (有限体积):
+
+    Shell i: 内半径 r_i = i*dr, 外半径 r_(i+1) = (i+1)*dr
+    壳层体积: V_i = (4/3)*π*(r_(i+1)³ - r_i³)
+    壳层厚度: dr = R_p / N
+
+壳层之间的扩散通量使用两点通量近似:
+
+    J_{i→i+1} = -D_s * (c_s[i+1] - c_s[i]) / dr  [mol/(m²·s)]
+
+界面面积: A = 4*π*r²
+
+表面边界条件:
+    flux_surface = -I_rxn / F  [mol/(m²·s)]
+    正值 = 锂进入颗粒 (嵌锂), 负值 = 锂离开颗粒 (脱锂)
+
+质量守恒
+--------
+有限体积离散化保证质量守恒:
+
+    Σ_i (dc_s[i]/dt * V_i) = flux_surface * A_surface
+
+即: 颗粒内总锂量的变化率 = 表面通量 × 表面积
+
+符号约定
+--------
+- flux_surface > 0: 锂进入颗粒 (嵌锂, lithiation)
+  对应放电过程中的阴极反应 (i_r < 0)
+- flux_surface < 0: 锂离开颗粒 (脱锂, deintercalation)
+
+    flux_surface = -I_rxn / F
+
+当 I_rxn < 0 (阴极反应) 时, flux_surface > 0 (嵌锂)。
+
+对应 DERIVATION.md 章节: §2.3, §3.4, §7.5
+
+参考文献
+--------
+Khan et al. (2021), J. Electrochem. Soc. 168(7), 070534.
 """
 
 import numpy as np
 
 
 def nmc532_diffusion_coefficient(c_s: float, T: float = 298.15) -> float:
-    """NMC532 Li diffusion coefficient D_s(c_s, T).
+    """
+    计算 NMC532 锂扩散系数 D_s(c_s, T)。
 
-    Empirical formula from the literature for NMC532.
-    The formula in Khan et al. is complex; here we use a simpler but
-    physically representative expression that captures the key behavior:
-    D_s varies with state of lithiation and temperature.
+    对应 DERIVATION.md §2.3: "Solid lithium in NMC is neutral
+    intercalated lithium. Its flux is Fickian: N_solid = -D_s(c_s,T) grad c_s."
 
-    D_s = D_ref * exp(-E_a/R * (1/T - 1/T_ref)) * f(c_s)
+    扩散系数模型 (Arrhenius 形式):
+
+        D_s = D_ref * exp(-E_a/R * (1/T - 1/T_ref)) * f(x)
+
+    其中:
+    - D_ref: 参考温度下的扩散系数 [m²/s]
+    - E_a: 活化能 (activation energy) [J/mol]
+    - R: 气体常数 [J/(mol·K)]
+    - T_ref: 参考温度 [K]
+    - f(x): 浓度依赖因子, x = c_s / c_s_max
+
+    浓度依赖性:
+    - f(x) 在 x=0.5 (50% SoC) 附近达到峰值
+    - 在 x→0 和 x→1 时减小 (极端嵌锂/脱锂态)
+    - 使用 f(x) = 0.1 + 0.9 * 4x(1-x) 近似
 
     Parameters
     ----------
     c_s : float
-        Solid Li concentration [mol/m³].
+        固相锂浓度 [mol/m³]。范围: (0, c_s_max=48900)。
     T : float
-        Temperature [K].
+        温度 [K]。默认 298.15 K (25°C)。
 
     Returns
     -------
     D_s : float
-        Diffusion coefficient [m²/s].
+        锂扩散系数 [m²/s]。
+        典型值: ~1e-14 m²/s (298 K, 50% SoC)。
+
+    Notes
+    -----
+    参见 DERIVATION.md §3.4: "For nonlinear D_s(c_s,T), K_mn^s must
+    be evaluated at t^{n+1} in a fully implicit Newton solve."
     """
-    R = 8.314462  # J/(mol·K)
+    R = 8.314462  # 气体常数 [J/(mol·K)]
 
-    # Reference values at 298.15 K
-    D_ref = 1e-14        # m²/s — typical for NMC at 50% SoC
-    E_a = 30000.0        # J/mol — activation energy
-    T_ref = 298.15       # K
+    # 参考参数 (298.15 K, 50% SoC)
+    D_ref = 1e-14        # 参考扩散系数 [m²/s] — NMC 典型值
+    E_a = 30000.0        # 活化能 [J/mol] — 文献报道范围 20~50 kJ/mol
+    T_ref = 298.15       # 参考温度 [K]
 
-    # Concentration dependence: D_s has a minimum near x=0 and x=1
-    # Use a smooth function that is ~1 at x=0.5 and decreases at extremes.
-    # c_s_max for NMC532 = 48900 mol/m³
+    # 计算嵌锂度 x = c_s / c_s_max
+    # NMC532 的 c_s_max = 48900 mol/m³
     c_s_max = 48900.0
-    x = np.clip(c_s / c_s_max, 0.01, 0.99)
+    x = np.clip(c_s / c_s_max, 0.01, 0.99)  # 裁剪到安全范围
 
-    # Empirical fit: D_s(x) has a U-shape or shallow dependence
-    # Literature shows D_s ~ 1e-14 to 1e-12 for NMC
-    f_cs = 0.1 + 0.9 * (4.0 * x * (1.0 - x))  # peaks at x=0.5, ~0.1 at extremes
+    # 浓度依赖因子 f(x)
+    # 在 x=0.5 时达到最大值 1.0, 在 x→0 和 x→1 时减小到 ~0.1
+    # 使用抛物线: 4x(1-x) 在 [0,1] 范围内为 [0,1]
+    f_cs = 0.1 + 0.9 * (4.0 * x * (1.0 - x))
 
+    # Arrhenius 温度依赖
+    # 当 T > T_ref 时, 指数为正, D_s 增大 (高温扩散更快)
+    # 当 T < T_ref 时, 指数为负, D_s 减小
     D_s = D_ref * np.exp(-E_a / R * (1.0 / T - 1.0 / T_ref)) * f_cs
 
     return D_s
 
 
 def discretize_spherical_particle(R_p: float, N: int) -> tuple[float, np.ndarray]:
-    """Discretize a spherical particle into N concentric shells (finite volume).
+    """
+    将球形颗粒离散为 N 个同心壳层 (有限体积法)。
+
+    对应 DERIVATION.md §7.5 中的固体扩散离散化。
+
+    壳层几何:
+    - Shell 0 (核心):  r ∈ [0, dr]
+    - Shell 1:          r ∈ [dr, 2*dr]
+    - ...
+    - Shell N-1 (表面): r ∈ [(N-1)*dr, N*dr=R_p]
+
+    每个壳层的体积:
+        V_i = (4/3)*π*(r_outer³ - r_inner³)
+            = (4/3)*π*((i+1)³ - i³)*dr³
+
+    所有壳层体积之和等于球的总体积:
+        Σ V_i = (4/3)*π*R_p³
 
     Parameters
     ----------
     R_p : float
-        Particle radius [m].
+        颗粒半径 (particle radius) [m]。
+        NMC532 典型值: 2.5~5 μm (2.5e-6 ~ 5e-6 m)。
     N : int
-        Number of shells.
+        壳层数量。更多的壳层 → 更高的空间分辨率, 但计算成本更高。
+        典型值: 10~50。
 
     Returns
     -------
     dr : float
-        Shell thickness [m].
-    volumes : ndarray
-        Volume of each shell [m³].
+        壳层厚度 [m]。dr = R_p / N。
+    volumes : ndarray of shape (N,)
+        每个壳层的体积 [m³]。
+        单位: m³。
     """
-    dr = R_p / N
-    # Shell radii: r_i = (i + 0.5) * dr for i = 0..N-1
+    dr = R_p / N  # 壳层厚度 [m]
+
+    # 每个壳层的内外半径
+    # Shell i: 内半径 = i*dr, 外半径 = (i+1)*dr
     r_inner = np.arange(N) * dr
     r_outer = r_inner + dr
-    # Volume of spherical shell: V = (4/3)*pi*(r_outer³ - r_inner³)
+
+    # 球壳体积: V = (4/3)*π*(r_outer³ - r_inner³)
     volumes = (4.0 / 3.0) * np.pi * (r_outer**3 - r_inner**3)
+
     return dr, volumes
 
 
@@ -95,59 +198,106 @@ def solid_diffusion_rhs(
     flux_surface: float,
     N: int,
 ) -> np.ndarray:
-    """Right-hand side of the solid diffusion ODE system.
+    """
+    计算固相扩散 ODE 系统的右端项 (RHS)。
 
-    d(c_s)/dt = RHS, where RHS is computed from finite-volume discretization
-    of spherical diffusion with flux boundary condition at the surface.
+    求解: d(c_s)/dt = RHS
+
+    RHS 通过对球形扩散方程的有限体积离散化获得:
+
+        ∂c_s/∂t = (1/r²) * ∂/∂r (r² * D_s * ∂c_s/∂r)
+
+    离散化后, 对于内部壳层 i 和 i+1 之间的界面:
+        J_{i→i+1} = -D_s * (c_s[i+1] - c_s[i]) / dr  [mol/(m²·s)]
+        A_{face} = 4*π*r_face²  [m²]
+
+    壳层 i 的浓度变化率:
+        dc_s[i]/dt += J * A / V_i  (来自内侧界面)
+        dc_s[i]/dt -= J * A / V_i  (来自外侧界面)
+
+    表面边界条件 (壳层 N-1 的外侧):
+        dc_s[N-1]/dt += flux_surface * A_surface / V_last
+
+    符号约定:
+    - flux_surface > 0: 锂进入颗粒 (嵌锂)
+    - flux_surface < 0: 锂离开颗粒 (脱锂)
+    - flux_surface = -I_rxn / F
+
+    对应 DERIVATION.md §2.3, §3.4
 
     Parameters
     ----------
     c_s : ndarray of shape (N,)
-        Li concentration in each shell [mol/m³].
+        各壳层的锂浓度 [mol/m³]。
+        c_s[0] = 核心浓度, c_s[N-1] = 表面浓度。
     R_p : float
-        Particle radius [m].
+        颗粒半径 [m]。
     D_s : float
-        Diffusion coefficient [m²/s] (assumed uniform in particle).
+        扩散系数 [m²/s]。假设颗粒内均匀 (不随位置变化)。
+        注意: 实际 D_s 可能随 c_s 变化, 此处使用单一值。
     flux_surface : float
-        Li flux at particle surface [mol/(m²·s)].
-        Positive = into particle (lithiation), negative = extraction.
+        颗粒表面的锂通量 [mol/(m²·s)]。
+        正值 = 进入颗粒 (嵌锂), 负值 = 离开颗粒 (脱锂)。
+        与 Butler-Volmer 反应电流的关系: flux_surface = -I_rxn / F。
     N : int
-        Number of shells.
+        壳层数量。
 
     Returns
     -------
     dc_dt : ndarray of shape (N,)
-        Time derivative of concentration in each shell [mol/(m³·s)].
+        各壳层浓度的时间导数 [mol/(m³·s)]。
+        dc_dt[i] = dc_s[i]/dt。
+
+    Notes
+    -----
+    质量守恒检验:
+        Σ_i (dc_dt[i] * V_i) = flux_surface * A_surface
+    即: 颗粒总锂量变化率 = 表面通量 × 表面积。
     """
-    dr = R_p / N
+    dr = R_p / N  # 壳层厚度 [m]
     dc_dt = np.zeros(N)
 
-    # Interior faces (between shell i and shell i+1)
+    # ===== 内部界面 (壳层 i 和壳层 i+1 之间) =====
     for i in range(N - 1):
-        # Face at r = (i+1) * dr
+        # 界面位置: r = (i+1) * dr
         r_face = (i + 1) * dr
-        # Concentration gradient at face
+
+        # 浓度梯度 (一阶差分近似)
+        # dc/dr ≈ (c_s[i+1] - c_s[i]) / dr
         dcdr = (c_s[i + 1] - c_s[i]) / dr
-        # Flux through face: J = -D * dc/dr  [mol/(m²·s)]
+
+        # Fick 定律: J = -D * dc/dr [mol/(m²·s)]
+        # 负号表示扩散方向与浓度梯度方向相反
         flux = -D_s * dcdr
-        # Area of face: A = 4*pi*r²
+
+        # 界面面积: A = 4*π*r² (球面)
         area = 4.0 * np.pi * r_face**2
-        # Volume of shell i
+
+        # 壳层 i 的体积: V_i = (4/3)*π*(r_outer³ - r_inner³)
         r_i_inner = i * dr
         r_i_outer = (i + 1) * dr
         vol_i = (4.0 / 3.0) * np.pi * (r_i_outer**3 - r_i_inner**3)
-        # Volume of shell i+1
+
+        # 壳层 i+1 的体积
         r_ip1_inner = (i + 1) * dr
         r_ip1_outer = (i + 2) * dr
         vol_ip1 = (4.0 / 3.0) * np.pi * (r_ip1_outer**3 - r_ip1_inner**3)
 
-        dc_dt[i] += flux * area / vol_i
-        dc_dt[i + 1] -= flux * area / vol_ip1
+        # 有限体积守恒: flux 进入壳层 i → dc_dt[i] 增加
+        # flux 方向: 从 i+1 流向 i (当 c_s[i+1] > c_s[i] 时 flux > 0)
+        dc_dt[i] += flux * area / vol_i      # 壳层 i 获得通量
+        dc_dt[i + 1] -= flux * area / vol_ip1  # 壳层 i+1 失去通量
 
-    # Surface boundary (flux into outermost shell)
-    r_surface = R_p
-    area_surface = 4.0 * np.pi * r_surface**2
+    # ===== 表面边界条件 (壳层 N-1 的外侧) =====
+    # 表面通量 flux_surface 从外部进入最外层壳层
+    r_surface = R_p  # 颗粒表面半径
+    area_surface = 4.0 * np.pi * r_surface**2  # 表面积
+
+    # 最外层壳层的体积
     vol_last = (4.0 / 3.0) * np.pi * (R_p**3 - (R_p - dr)**3)
+
+    # 表面通量对最外层壳层的贡献
+    # flux_surface > 0 (嵌锂) → dc_dt[N-1] 增加
     dc_dt[N - 1] += flux_surface * area_surface / vol_last
 
     return dc_dt
