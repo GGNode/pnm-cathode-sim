@@ -15,85 +15,214 @@
       5
     ],
     "spacing_m": 1e-05,
-    "porosity": 0.5,
+    "porosity": 0.368,
     "cbd_fraction": 0.1,
     "seed": 42,
     "cutoff_V": 3.0,
     "initial_sol": 0.35,
-    "nmc_density_g_m3_for_capacity": 4750000.0
+    "nmc_density_g_m3_for_capacity": 4750000.0,
+    "geometric_area_m2": 2.5e-09
   },
   "figure4": {
     "0.2C": {
-      "initial_voltage_V": 4.300225150343076,
-      "final_voltage_V": 3.0,
-      "final_capacity_mAh_g": 45.02800989689879,
-      "final_capacity_Ah_m2": 31.197494545869333,
-      "reached_cutoff": true,
+      "initial_voltage_V": 4.125799742814387,
+      "final_voltage_V": 3.2874668578198594,
+      "final_capacity_mAh_g": 200.5518779186832,
+      "final_capacity_Ah_m2": 16.603481373562182,
+      "reached_cutoff": false,
+      "cutoff_limited": false,
+      "time_limited": true,
       "converged_fraction": 1.0,
-      "final_mean_sol": 0.20101673014613453,
-      "final_min_sol": 2.0449897750511246e-05,
-      "final_max_sol": 0.9999717185127434,
-      "n_points": 2753
+      "final_mean_sol": 0.5546192475931282,
+      "final_min_sol": 0.35,
+      "final_max_sol": 0.9988306960091876,
+      "diagnostics": {
+        "active_e_fraction": 0.11627906976744186,
+        "active_e": 5,
+        "total_e": 43,
+        "active_s": 81,
+        "reactive_interfaces": 15,
+        "phi_e_range_V": [
+          0.0,
+          0.0
+        ],
+        "phi_s_range_V": [
+          4.1095996760618325,
+          4.300225150343077
+        ],
+        "eta_range_V": [
+          -0.14715325150029113,
+          -0.10354511871654193
+        ],
+        "mass_loading_g_m2": 82.78895987348628,
+        "current_density_A_m2": -2.9695444262776953,
+        "geometric_area_m2": 2.5e-09,
+        "cc_area_m2": 2.5e-09,
+        "I_rxn": {
+          "min": -130.04518137550804,
+          "max": -55.54814652401857,
+          "mean": -95.62071730352179,
+          "abs_max": 130.04518137550804,
+          "nonzero_count": 15
+        }
+      },
+      "n_points": 12257
     },
     "0.5C": {
-      "initial_voltage_V": 4.300225150343076,
-      "final_voltage_V": 3.0,
-      "final_capacity_mAh_g": 52.8789398031191,
-      "final_capacity_Ah_m2": 36.63698306623984,
-      "reached_cutoff": true,
+      "initial_voltage_V": 4.023091832509785,
+      "final_voltage_V": 3.1819064810662034,
+      "final_capacity_mAh_g": 205.48549338803954,
+      "final_capacity_Ah_m2": 17.011930266685937,
+      "reached_cutoff": false,
+      "cutoff_limited": false,
+      "time_limited": true,
       "converged_fraction": 1.0,
-      "final_mean_sol": 0.18307088679829087,
-      "final_min_sol": 2.0449897750511246e-05,
-      "final_max_sol": 0.9998347815139313,
-      "n_points": 1294
+      "final_mean_sol": 0.5160405010584196,
+      "final_min_sol": 0.35,
+      "final_max_sol": 0.9990702864988059,
+      "diagnostics": {
+        "active_e_fraction": 0.11627906976744186,
+        "active_e": 5,
+        "total_e": 43,
+        "active_s": 81,
+        "reactive_interfaces": 15,
+        "phi_e_range_V": [
+          0.0,
+          0.0
+        ],
+        "phi_s_range_V": [
+          3.9825717133640945,
+          4.300225150343077
+        ],
+        "eta_range_V": [
+          -0.20863702048328125,
+          -0.13211375518095458
+        ],
+        "mass_loading_g_m2": 82.78895987348628,
+        "current_density_A_m2": -7.423861065694237,
+        "geometric_area_m2": 2.5e-09,
+        "cc_area_m2": 2.5e-09,
+        "I_rxn": {
+          "min": -423.47437917211835,
+          "max": -97.23125182026475,
+          "mean": -241.3158452491612,
+          "abs_max": 423.47437917211835,
+          "nonzero_count": 15
+        }
+      },
+      "n_points": 5024
     },
     "1C": {
-      "initial_voltage_V": 4.300225150343076,
-      "final_voltage_V": 3.0,
-      "final_capacity_mAh_g": 64.1993896686396,
-      "final_capacity_Ah_m2": 44.480315999341265,
-      "reached_cutoff": true,
+      "initial_voltage_V": 3.900969641208773,
+      "final_voltage_V": 3.0573945749702878,
+      "final_capacity_mAh_g": 213.70818583696695,
+      "final_capacity_Ah_m2": 17.692678421892204,
+      "reached_cutoff": false,
+      "cutoff_limited": false,
+      "time_limited": true,
       "converged_fraction": 1.0,
-      "final_mean_sol": 0.22389858783299593,
-      "final_min_sol": 2.0449897750511246e-05,
-      "final_max_sol": 0.9988840863215045,
-      "n_points": 786
+      "final_mean_sol": 0.4953338141077232,
+      "final_min_sol": 0.35,
+      "final_max_sol": 0.9992201808883274,
+      "diagnostics": {
+        "active_e_fraction": 0.11627906976744186,
+        "active_e": 5,
+        "total_e": 43,
+        "active_s": 81,
+        "reactive_interfaces": 15,
+        "phi_e_range_V": [
+          0.0,
+          0.0
+        ],
+        "phi_s_range_V": [
+          3.819853946308397,
+          4.300225150343077
+        ],
+        "eta_range_V": [
+          -0.25975757095626495,
+          -0.1509817811111942
+        ],
+        "mass_loading_g_m2": 82.78895987348628,
+        "current_density_A_m2": -14.847722131388474,
+        "geometric_area_m2": 2.5e-09,
+        "cc_area_m2": 2.5e-09,
+        "I_rxn": {
+          "min": -1127.446169116976,
+          "max": -140.00583518375643,
+          "mean": -496.0714623785483,
+          "abs_max": 1127.446169116976,
+          "nonzero_count": 15
+        }
+      },
+      "n_points": 2613
     },
     "3C": {
-      "initial_voltage_V": 4.300225150343076,
+      "initial_voltage_V": 3.516752379074856,
       "final_voltage_V": 3.0,
-      "final_capacity_mAh_g": 93.87591663147438,
-      "final_capacity_Ah_m2": 65.04159086321543,
+      "final_capacity_mAh_g": 9.519670210316791,
+      "final_capacity_Ah_m2": 0.7881235950507395,
       "reached_cutoff": true,
+      "cutoff_limited": true,
+      "time_limited": false,
       "converged_fraction": 1.0,
-      "final_mean_sol": 0.2123052614059368,
-      "final_min_sol": 2.0449897750511246e-05,
-      "final_max_sol": 0.9949603576880787,
-      "n_points": 384
+      "final_mean_sol": 0.3949373584787301,
+      "final_min_sol": 0.349999999999999,
+      "final_max_sol": 0.7718357413816114,
+      "diagnostics": {
+        "active_e_fraction": 0.11627906976744186,
+        "active_e": 5,
+        "total_e": 43,
+        "active_s": 81,
+        "reactive_interfaces": 15,
+        "phi_e_range_V": [
+          0.0,
+          0.0
+        ],
+        "phi_s_range_V": [
+          3.2728066807829017,
+          4.300225150343077
+        ],
+        "eta_range_V": [
+          -0.3405449785109078,
+          -0.1779609677339833
+        ],
+        "mass_loading_g_m2": 82.78895987348628,
+        "current_density_A_m2": -44.543166394165425,
+        "geometric_area_m2": 2.5e-09,
+        "cc_area_m2": 2.5e-09,
+        "I_rxn": {
+          "min": -5296.407497058579,
+          "max": -235.16973954898364,
+          "mean": -1603.5400363341375,
+          "abs_max": 5296.407497058579,
+          "nonzero_count": 15
+        }
+      },
+      "n_points": 40
     }
   },
   "spatial": {
     "1C": {
-      "mean_sol": 0.48646762931389803,
-      "voltage_V": 3.799525201628724,
+      "mean_sol": 0.46536653377307835,
+      "voltage_V": 3.0610031558809516,
       "time_s": 985.404023415914,
       "reached_target": false,
       "converged_fraction": 1.0,
-      "ce_delta_cc_minus_sep_mol_m3": -154.2171997551443,
-      "phie_delta_cc_minus_sep_V": -0.0011223937384034067,
-      "sol_delta_cc_minus_sep": 0.1345702634236562,
-      "phis_delta_cc_minus_sep_V": -0.17887377854213238
+      "ce_delta_cc_minus_sep_mol_m3": -6.252776074688882e-11,
+      "phie_delta_cc_minus_sep_V": 0.0,
+      "sol_delta_cc_minus_sep": -0.34186551482741606,
+      "phis_delta_cc_minus_sep_V": -0.09935410388205002
     },
     "3C": {
-      "mean_sol": 0.2123052614059368,
-      "voltage_V": 9.746835257716521,
-      "time_s": 629.0162349471589,
+      "mean_sol": 0.39493735847440714,
+      "voltage_V": 2.992947407011997,
+      "time_s": 64.05126152203488,
       "reached_target": false,
       "converged_fraction": 1.0,
-      "ce_delta_cc_minus_sep_mol_m3": 2842.074074074075,
-      "phie_delta_cc_minus_sep_V": 19.902328127046584,
-      "sol_delta_cc_minus_sep": 0.1695825628620463,
-      "phis_delta_cc_minus_sep_V": 36.27152786039254
+      "ce_delta_cc_minus_sep_mol_m3": -6.821210263296962e-12,
+      "phie_delta_cc_minus_sep_V": 0.0,
+      "sol_delta_cc_minus_sep": -0.1328258757439837,
+      "phis_delta_cc_minus_sep_V": -0.3933053882153086
     }
   }
 }

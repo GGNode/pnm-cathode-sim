@@ -105,7 +105,13 @@ class TransientSolver:
         固相扩散拉普拉斯矩阵 [m³/s]。含浓度依赖的 D_s(c_s)。
     """
 
-    def __init__(self, net: op.network.Cubic, T: float = 303.0, k0: float = 1e-10):
+    def __init__(
+        self,
+        net: op.network.Cubic,
+        T: float = 303.0,
+        k0: float = 1e-10,
+        geometric_area: float | None = None,
+    ):
         """
         初始化瞬态求解器。
 
@@ -119,10 +125,15 @@ class TransientSolver:
         k0 : float
             Butler-Volmer 反应速率常数 [m^(2.5) / (mol^0.5 · s)]。
             默认 5e-10。
+        geometric_area : float or None
+            Projected geometric electrode area [m²]. When provided, it is used
+            for C-rate current-density conversion and current boundary scaling
+            instead of the network-derived collector throat area.
         """
         self.net = net
         self.T = T
         self.k0 = k0
+        self.geometric_area = geometric_area
         self.Np = net.Np        # 总孔隙数
         self.Nt = net.Nt        # 总喉道数
         self.conns = net["throat.conns"]    # 喉道连接关系, shape (Nt, 2)
@@ -166,6 +177,10 @@ class TransientSolver:
 
         # 稳态求解器 (处理电位方程和 BV 动力学)
         self._steady = SteadyStateSolver(net, T=T, k0=k0)
+        if geometric_area is not None:
+            if geometric_area <= 0:
+                raise ValueError("geometric_area must be positive when provided")
+            self._steady._cc_area = float(geometric_area)
         # 过滤: 只保留与稳态求解器一致的反应界面
         self._filter_reactive_interfaces()
 
@@ -221,7 +236,12 @@ class TransientSolver:
         vacancies = np.maximum(cs_max - self.c_s[self.nmc_indices], 0.0)
         return float(F * np.sum(vacancies * self._vol_s))
 
-    def current_density_for_c_rate(self, C_rate: float, cs_max: float = 48900.0) -> float:
+    def current_density_for_c_rate(
+        self,
+        C_rate: float,
+        cs_max: float = 48900.0,
+        geometric_area: float | None = None,
+    ) -> float:
         """
         将正的放电 C-rate 转换为阳极约定的电流密度 [A/m²]。
 
@@ -242,6 +262,9 @@ class TransientSolver:
             放电倍率, 必须为正值。1C = 1 小时完全放电。
         cs_max : float
             NMC 最大锂浓度 [mol/m³]。
+        geometric_area : float or None
+            Optional projected geometric area [m²] to use for this conversion.
+            Defaults to the solver's configured collector area.
 
         Returns
         -------
@@ -253,8 +276,11 @@ class TransientSolver:
         # Q_remaining [C], 除以 3600 得 [A·h], 再乘 C_rate 得 [A]
         capacity_c = self.discharge_capacity_coulombs(cs_max=cs_max)
         current_a = C_rate * capacity_c / 3600.0
+        area = self.collector_area if geometric_area is None else float(geometric_area)
+        if area <= 0:
+            raise ValueError("current-density area must be positive")
         # 阳极约定: 放电电流为负
-        return -current_a / self.collector_area
+        return -current_a / area
 
     def characteristic_dt(
         self,

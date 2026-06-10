@@ -343,6 +343,58 @@ class SteadyStateSolver:
         self._ie_e_g = np.array([ie[0] for ie in self.reactive_interfaces], dtype=int)
         self._ie_s_g = np.array([ie[1] for ie in self.reactive_interfaces], dtype=int)
 
+    def diagnostics(self, result: dict | None = None) -> dict:
+        """Return connectivity and field diagnostics for the current state.
+
+        Parameters
+        ----------
+        result : dict or None
+            Optional output from solve(). If omitted, diagnostics are computed
+            from an open-circuit solve at the current concentrations.
+        """
+        if result is None:
+            result = self.solve(I_app=0.0)
+
+        def finite_min_max(values: np.ndarray) -> tuple[float | None, float | None]:
+            finite = np.asarray(values)[np.isfinite(values)]
+            if finite.size == 0:
+                return None, None
+            return float(np.min(finite)), float(np.max(finite))
+
+        phi_e_min, phi_e_max = finite_min_max(result["phi_e"])
+        phi_s_min, phi_s_max = finite_min_max(result["phi_s"])
+        i_rxn = np.asarray(result.get("I_rxn", []), dtype=float)
+        active_i_rxn = i_rxn[np.isfinite(i_rxn) & (np.abs(i_rxn) > 0.0)]
+
+        if active_i_rxn.size:
+            i_rxn_stats = {
+                "min": float(np.min(active_i_rxn)),
+                "max": float(np.max(active_i_rxn)),
+                "mean": float(np.mean(active_i_rxn)),
+                "abs_max": float(np.max(np.abs(active_i_rxn))),
+                "nonzero_count": int(active_i_rxn.size),
+            }
+        else:
+            i_rxn_stats = {
+                "min": 0.0,
+                "max": 0.0,
+                "mean": 0.0,
+                "abs_max": 0.0,
+                "nonzero_count": 0,
+            }
+
+        return {
+            "phi_e_min": phi_e_min,
+            "phi_e_max": phi_e_max,
+            "phi_s_min": phi_s_min,
+            "phi_s_max": phi_s_max,
+            "I_rxn": i_rxn_stats,
+            "active_e": int(np.count_nonzero(self.active_e)),
+            "active_s": int(np.count_nonzero(self.active_s)),
+            "reactive_interfaces": int(len(self.reactive_interfaces)),
+            "cc_area": float(self._cc_area),
+        }
+
     def _compute_residual(self, phi_e, phi_s, I_app):
         """Compute only the residual vector (no Jacobian) for line search.
 

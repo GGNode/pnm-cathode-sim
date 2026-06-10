@@ -105,3 +105,29 @@ class TestSteadyStateSolver:
         result = solver.solve(I_app=0.0)
         for key in ["phi_e", "phi_s", "voltage", "I_rxn"]:
             assert key in result, f"Missing key: {key}"
+
+    def test_diagnostics_keys(self):
+        """Diagnostics should report field ranges, reaction stats, and connectivity."""
+        net = create_cathode_network(
+            shape=[5, 5, 5], spacing=1e-5, porosity=0.5, seed=42,
+        )
+        solver = SteadyStateSolver(net, T=298.15)
+        solver.set_concentration(c_e=1200.0, c_s=24450.0)
+        result = solver.solve(I_app=-0.001)
+        diagnostics = solver.diagnostics(result)
+
+        for key in [
+            "phi_e_min",
+            "phi_e_max",
+            "phi_s_min",
+            "phi_s_max",
+            "I_rxn",
+            "active_e",
+            "active_s",
+            "reactive_interfaces",
+            "cc_area",
+        ]:
+            assert key in diagnostics, f"Missing key: {key}"
+        assert diagnostics["cc_area"] > 0.0
+        assert diagnostics["reactive_interfaces"] == len(solver.reactive_interfaces)
+        assert diagnostics["I_rxn"]["nonzero_count"] >= 0

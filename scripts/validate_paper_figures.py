@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src.network.generator import create_cathode_network
+from src.physics.ocv import nmc532_ocv
 from src.solver.transient import TransientSolver
 
 
@@ -31,6 +32,7 @@ OUT_DIR = ROOT / "data/validation"
 
 SHAPE = [5, 5, 5]
 SPACING = 1e-5
+A_GEOMETRIC = (5 * SPACING) ** 2
 POROSITY = 0.368
 CBD_FRACTION = 0.10
 SEED = 42
@@ -84,14 +86,84 @@ def make_solver() -> TransientSolver:
         cbd_fraction=CBD_FRACTION,
         seed=SEED,
     )
-    solver = TransientSolver(net, T=T, k0=K0)
+    solver = TransientSolver(net, T=T, k0=K0, geometric_area=A_GEOMETRIC)
     solver.set_concentration(c_e=C_E0, c_s=C_S0)
     return solver
 
 
 def nmc_mass_loading_g_m2(solver: TransientSolver) -> float:
     nmc_vol_m3 = float(np.sum(solver.net["pore.volume"][solver.nmc_indices]))
-    return NMC_DENSITY_G_M3 * nmc_vol_m3 / solver.collector_area
+    return NMC_DENSITY_G_M3 * nmc_vol_m3 / A_GEOMETRIC
+
+
+def _range(values: np.ndarray) -> tuple[float | None, float | None]:
+    finite = np.asarray(values)[np.isfinite(values)]
+    if finite.size == 0:
+        return None, None
+    return float(np.min(finite)), float(np.max(finite))
+
+
+def _fmt_range_mV(bounds: tuple[float | None, float | None]) -> str:
+    lo, hi = bounds
+    if lo is None or hi is None:
+        return "n/a"
+    return f"{1e3 * lo:.3f}..{1e3 * hi:.3f} mV (span={1e3 * (hi - lo):.3f} mV)"
+
+
+def eta_values(solver: TransientSolver, potential: dict) -> np.ndarray:
+    eta = []
+    for e_g, s_g, _area in solver._steady.reactive_interfaces:
+        pe = potential["phi_e"][e_g]
+        ps = potential["phi_s"][s_g]
+        cs = solver.c_s[s_g]
+        if np.isfinite(pe) and np.isfinite(ps):
+            eta.append(ps - pe - nmc532_ocv(cs / CS_MAX))
+    return np.asarray(eta, dtype=float)
+
+
+def print_diagnostics(
+    solver: TransientSolver,
+    potential: dict,
+    crate: float,
+    i_app: float,
+    mass_loading: float,
+) -> dict:
+    steady_diag = solver._steady.diagnostics(potential)
+    active_e = steady_diag["active_e"]
+    active_e_fraction = active_e / max(solver.n_e, 1)
+    phi_e_range = _range(potential["phi_e"])
+    phi_s_range = _range(potential["phi_s"])
+    eta_range = _range(eta_values(solver, potential))
+
+    diagnostics = {
+        "active_e_fraction": float(active_e_fraction),
+        "active_e": int(active_e),
+        "total_e": int(solver.n_e),
+        "active_s": int(steady_diag["active_s"]),
+        "reactive_interfaces": int(steady_diag["reactive_interfaces"]),
+        "phi_e_range_V": phi_e_range,
+        "phi_s_range_V": phi_s_range,
+        "eta_range_V": eta_range,
+        "mass_loading_g_m2": float(mass_loading),
+        "current_density_A_m2": float(i_app),
+        "geometric_area_m2": float(A_GEOMETRIC),
+        "cc_area_m2": float(steady_diag["cc_area"]),
+        "I_rxn": steady_diag["I_rxn"],
+    }
+
+    print(
+        f"  diagnostics {crate:g}C: "
+        f"active_e_fraction={active_e_fraction:.3f} ({active_e}/{solver.n_e}), "
+        f"reactive_interfaces={steady_diag['reactive_interfaces']}, "
+        f"phi_e_range={_fmt_range_mV(phi_e_range)}, "
+        f"phi_s_range={_fmt_range_mV(phi_s_range)}, "
+        f"eta_range={_fmt_range_mV(eta_range)}, "
+        f"mass_loading={mass_loading:.3f} g/m2, "
+        f"current_density={i_app:.6g} A/m2"
+    )
+    if active_e_fraction < 0.5:
+        print("  WARNING: LOW CONNECTIVITY active_e_fraction < 0.5")
+    return diagnostics
 
 
 def add_gravimetric_capacity(result: dict, solver: TransientSolver) -> dict:
@@ -137,9 +209,11 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
     solver = make_solver()
     i_app = solver.current_density_for_c_rate(crate)
     dt = min(20.0, 10.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
+    mass_loading = nmc_mass_loading_g_m2(solver)
 
     solver._steady.set_concentration(solver.c_e, solver.c_s)
-    initial = solver._steady.solve(I_app=0.0)
+    initial = solver._steady.solve(I_app=i_app)
+    diagnostics = print_diagnostics(solver, initial, crate, i_app, mass_loading)
     times = [0.0]
     capacities = [0.0]
     voltages = [initial["voltage"]]
@@ -173,6 +247,13 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
         if np.mean(solver.c_s[solver.nmc_indices] / CS_MAX) >= 0.999:
             break
 
+    cutoff_limited = reached_cutoff
+    if not cutoff_limited:
+        print(
+            f"  WARNING: {crate:g}C capacity is time-limited; "
+            "run did not reach cutoff voltage."
+        )
+
     result = {
         "time": np.asarray(times),
         "capacity": np.asarray(capacities),
@@ -184,10 +265,12 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
         "C_rate": crate,
         "cutoff_voltage": CUTOFF,
         "reached_cutoff": reached_cutoff,
+        "cutoff_limited": cutoff_limited,
         "converged_fraction": 1.0,
         "final_mean_sol": float(np.mean(solver.c_s[solver.nmc_indices] / CS_MAX)),
         "final_min_sol": float(np.min(solver.c_s[solver.nmc_indices] / CS_MAX)),
         "final_max_sol": float(np.max(solver.c_s[solver.nmc_indices] / CS_MAX)),
+        "diagnostics": diagnostics,
     }
     result = add_gravimetric_capacity(result, solver)
     out = OUT_DIR / f"discharge_{_safe_name(crate)}c.npz"
@@ -365,6 +448,7 @@ def build_metrics(rendered: dict[str, str], discharges: dict[float, dict], spati
             "cutoff_V": CUTOFF,
             "initial_sol": INITIAL_SOL,
             "nmc_density_g_m3_for_capacity": NMC_DENSITY_G_M3,
+            "geometric_area_m2": A_GEOMETRIC,
         },
         "figure4": {},
         "spatial": {},
@@ -378,10 +462,13 @@ def build_metrics(rendered: dict[str, str], discharges: dict[float, dict], spati
             "final_capacity_mAh_g": float(cap[-1]),
             "final_capacity_Ah_m2": float(result["capacity_Ah_m2"][-1]),
             "reached_cutoff": bool(result["reached_cutoff"]),
+            "cutoff_limited": bool(result["cutoff_limited"]),
+            "time_limited": not bool(result["cutoff_limited"]),
             "converged_fraction": float(result["converged_fraction"]),
             "final_mean_sol": float(result["final_mean_sol"]),
             "final_min_sol": float(result["final_min_sol"]),
             "final_max_sol": float(result["final_max_sol"]),
+            "diagnostics": result["diagnostics"],
             "n_points": int(len(voltage)),
         }
 

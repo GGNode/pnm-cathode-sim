@@ -146,6 +146,19 @@ class TestTransientSolver:
             sep_e = solver._steady.sep_e
             np.testing.assert_allclose(solver.c_e[solver.e_indices[sep_e]], 1200.0)
 
+    def test_geometric_area_overrides_c_rate_area(self):
+        """C-rate conversion and current BC should use configured geometric area."""
+        net = create_cathode_network(
+            shape=[5, 5, 5], spacing=1e-5, porosity=0.5, seed=42,
+        )
+        geometric_area = (5e-5) ** 2
+        solver = TransientSolver(net, T=298.15, geometric_area=geometric_area)
+        expected = -solver.discharge_capacity_coulombs() / 3600.0 / geometric_area
+
+        assert solver.collector_area == geometric_area
+        assert solver._steady._cc_area == geometric_area
+        assert solver.current_density_for_c_rate(1.0) == pytest.approx(expected)
+
     def test_zero_current_limit_recovers_ocv(self):
         """At I_app=0, eta=0, I_rxn=0, and V_cell=U(x0)."""
         net = create_cathode_network(
