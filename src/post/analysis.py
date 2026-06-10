@@ -169,7 +169,8 @@ def state_of_lithiation(c_s: np.ndarray, net: op.network.Cubic) -> np.ndarray:
 
 def discharge_curve(
     net: op.network.Cubic,
-    I_app: float = -0.001,
+    I_app: float | None = -0.001,
+    C_rate: float | None = None,
     dt: float = 10.0,
     n_steps: int = 100,
     T: float = 298.15,
@@ -201,9 +202,13 @@ def discharge_curve(
     ----------
     net : openpnm.network.Cubic
         孔隙网络对象。
-    I_app : float
+    I_app : float or None
         应用电流密度 [A/m²] (阳极约定, 放电为负)。
-        默认 -0.001 A/m² (非常小的电流, 接近 OCV)。
+        默认 -0.001 A/m² (非常小的电流, 接近 OCV)。若提供 C_rate,
+        则忽略此值并由电极容量换算放电电流密度。
+    C_rate : float or None
+        正的放电倍率。若提供, 使用 TransientSolver.current_density_for_c_rate()
+        转换为 I_app < 0。
     dt : float
         时间步 [s], 默认 10.0。
     n_steps : int
@@ -227,6 +232,10 @@ def discharge_curve(
     # 创建瞬态求解器并设置初始浓度
     solver = TransientSolver(net, T=T, k0=k0)
     solver.set_concentration(c_e=c_e_init, c_s=c_s_init)
+    if C_rate is not None:
+        I_app = solver.current_density_for_c_rate(C_rate)
+    if I_app is None:
+        raise ValueError("Either I_app or C_rate must be provided")
 
     voltages = np.zeros(n_steps)
     times = np.zeros(n_steps)
@@ -243,5 +252,8 @@ def discharge_curve(
     return {
         "voltage": voltages,
         "capacity": capacities,
+        "capacity_Ah_m2": capacities / 3600.0,
         "time": times,
+        "I_app": I_app,
+        "C_rate": C_rate,
     }

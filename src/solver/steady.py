@@ -128,6 +128,8 @@ class SteadyStateSolver:
         # 计算电导率和构建矩阵
         self._compute_conductances()
         self._build_matrices()
+        self._phi_e_guess: np.ndarray | None = None
+        self._phi_s_guess: np.ndarray | None = None
 
     def set_concentration(self, c_e: float = 1200.0, c_s: float = 24450.0):
         """设置均匀浓度场。"""
@@ -416,6 +418,11 @@ class SteadyStateSolver:
                 "converged": True,
             }
 
+        if self._phi_e_guess is not None and self._phi_e_guess.shape == (n_e,):
+            phi_e = self._phi_e_guess.copy()
+        if self._phi_s_guess is not None and self._phi_s_guess.shape == (n_s,):
+            phi_s = self._phi_s_guess.copy()
+
         # ===== SOR 迭代 =====
         converged = False
         iteration = 0
@@ -554,6 +561,10 @@ class SteadyStateSolver:
                 break
 
         # ===== 构建全网络输出 =====
+        if converged:
+            self._phi_e_guess = phi_e.copy()
+            self._phi_s_guess = phi_s.copy()
+
         phi_e_full = np.full(self.Np, np.nan)
         phi_s_full = np.full(self.Np, np.nan)
         for g in range(self.Np):

@@ -89,6 +89,22 @@ class TestDischargeCurve:
         assert len(result["voltage"]) == 5
         assert len(result["capacity"]) == 5
 
+    def test_discharge_curve_accepts_positive_c_rate(self):
+        """Positive discharge C-rate should be converted to signed I_app < 0."""
+        net = create_cathode_network(
+            shape=[5, 5, 5], spacing=1e-5, porosity=0.5, seed=42,
+        )
+        result = discharge_curve(
+            net, I_app=None, C_rate=0.2, dt=10.0, n_steps=2, T=298.15,
+        )
+        assert result["I_app"] < 0.0
+        assert result["C_rate"] == 0.2
+        np.testing.assert_allclose(
+            result["capacity"],
+            abs(result["I_app"]) * result["time"],
+        )
+        np.testing.assert_allclose(result["capacity_Ah_m2"], result["capacity"] / 3600.0)
+
     def test_discharge_voltage_in_range(self):
         """All voltages should be in physical range."""
         net = create_cathode_network(

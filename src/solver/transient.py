@@ -133,6 +133,7 @@ class TransientSolver:
         # c_s: 固相锂浓度 [mol/m³], 初始 24450 (x = c_s/cs_max ≈ 0.5)
         self.c_e = np.ones(self.Np) * 1200.0
         self.c_s = np.ones(self.Np) * 24450.0
+        self.c_e_reservoir = 1200.0
 
         # ===== 相标识掩码 (Phase Masks) =====
         # e_mask: 电解质孔隙 (含 separator 电解质)
@@ -181,6 +182,7 @@ class TransientSolver:
         """
         self.c_e[:] = c_e
         self.c_s[:] = c_s
+        self.c_e_reservoir = c_e
         self._steady.set_concentration(c_e, c_s)
 
     @property
@@ -517,7 +519,7 @@ class TransientSolver:
         # ===== Step 1: 求解电位场 =====
         # 在当前浓度下, 求解电解质和固相的电位方程
         self._steady.set_concentration(self.c_e, self.c_s)
-        pot = self._steady.solve(I_app=I_app)
+        pot = self._steady.solve(I_app=I_app, tol=1e-8, max_iter=200)
 
         # 提取局部电位值 (用于计算 BV 过电位)
         phi_e_local = np.array([pot["phi_e"][g] for g in self.e_indices])
@@ -585,6 +587,15 @@ class TransientSolver:
         # 电解质浓度方程
         M_e = sparse.diags(self._vol_e / dt) - self.L_ce
         rhs_e = (self._vol_e / dt) * c_e_local + self._vol_e * dce_dt
+        # 隔膜/Li 侧连接电解液储液库: c_e = c_e_reservoir。
+        # 参见 DERIVATION.md §4.1，固定浓度边界补充放电消耗的 Li+。
+        if self.n_e and len(self._steady.sep_e) > 0:
+            M_e = M_e.tolil()
+            for i in self._steady.sep_e:
+                M_e[i, :] = 0.0
+                M_e[i, i] = 1.0
+                rhs_e[i] = self.c_e_reservoir
+            M_e = M_e.tocsr()
         # 固相浓度方程
         M_s = sparse.diags(self._vol_s / dt) - self.L_cs
         rhs_s = (self._vol_s / dt) * c_s_local + self._vol_s * dcs_dt

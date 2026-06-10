@@ -80,6 +80,21 @@ class TestSteadyStateSolver:
             f"V_cell={V_cell:.4f}V, expected near U_eq={U_eq:.4f}V"
         )
 
+    def test_small_current_polarization_scales_linearly(self):
+        """Low-current voltage polarization should be linear in current magnitude."""
+        net = create_cathode_network(
+            shape=[5, 5, 5], spacing=1e-5, porosity=0.5, seed=42,
+        )
+        solver = SteadyStateSolver(net, T=298.15)
+        solver.set_concentration(c_e=1200.0, c_s=24450.0)
+
+        ocv = solver.solve(I_app=0.0)["voltage"]
+        pol_low = ocv - solver.solve(I_app=-1e-4)["voltage"]
+        pol_high = ocv - solver.solve(I_app=-2e-4)["voltage"]
+
+        assert pol_low > 0.0
+        np.testing.assert_allclose(pol_high / pol_low, 2.0, rtol=0.1)
+
     def test_result_keys(self):
         """Result should contain expected keys."""
         net = create_cathode_network(
