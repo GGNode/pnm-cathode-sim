@@ -1,1 +1,6 @@
-"""Post-processing: visualization and analysis."""
+"""后处理模块: 可视化与分析。
+
+子模块:
+- visualization: 放电曲线、相分布图、浓度场图
+- analysis: 孔径分布、配位数、锂化度、放电曲线生成
+"""

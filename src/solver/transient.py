@@ -400,7 +400,7 @@ class TransientSolver:
         self._build_solid_diffusion_matrix()
 
     def _build_electrolyte_diffusion_matrix(self):
-        """Build electrolyte diffusion Laplacian using D_e(c_e)."""
+        """构建电解质扩散 Laplacian 矩阵 L_ce, 使用 D_e(c_e)。"""
         conns = self.conns
         A = self.net["throat.area"]     # 喉道截面积 [m²]
         L = self.net["throat.length"]   # 喉道长度 [m]
@@ -425,7 +425,7 @@ class TransientSolver:
         self.L_ce = sparse.csr_matrix((ev, (er, ec)), shape=(self.n_e, self.n_e))
 
     def _build_solid_diffusion_matrix(self):
-        """Build solid diffusion Laplacian using D_s(c_s)."""
+        """构建固相扩散 Laplacian 矩阵 L_cs, 使用 D_s(c_s)。"""
         conns = self.conns
         A = self.net["throat.area"]
         L = self.net["throat.length"]

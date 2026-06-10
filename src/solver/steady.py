@@ -156,7 +156,7 @@ class SteadyStateSolver:
         self.c_s[:] = c_s
 
     def _compute_electrolyte_conductance(self):
-        """Compute electrolyte throat conductance from current concentration."""
+        """根据当前浓度计算电解质喉道电导 G_e [S]。"""
         A = self.net["throat.area"]
         L = self.net["throat.length"]
 
@@ -171,7 +171,7 @@ class SteadyStateSolver:
         self.G_e = np.where(self.e_mask[p1] & self.e_mask[p2], kappa * A / L, 0.0)
 
     def _build_electrolyte_matrix(self):
-        """Build the electrolyte potential Laplacian from current G_e."""
+        """从当前 G_e 构建电解质电位 Laplacian 矩阵 L_e。"""
         er, ec, ev = [], [], []
         for t in range(self.Nt):
             if self.G_e[t] == 0:
@@ -184,7 +184,7 @@ class SteadyStateSolver:
         self.L_e = sparse.csr_matrix((ev, (er, ec)), shape=(self.n_e, self.n_e))
 
     def update_conductances(self):
-        """Refresh concentration-dependent electrolyte conductance and matrix."""
+        """刷新浓度依赖的电解质电导和 Laplacian 矩阵。"""
         self._compute_electrolyte_conductance()
         self._build_electrolyte_matrix()
 
@@ -378,13 +378,18 @@ class SteadyStateSolver:
         self._ie_s_g = np.array([ie[1] for ie in self.reactive_interfaces], dtype=int)
 
     def diagnostics(self, result: dict | None = None) -> dict:
-        """Return connectivity and field diagnostics for the current state.
+        """
+        返回当前状态的连通性和场诊断信息。
 
         Parameters
         ----------
         result : dict or None
-            Optional output from solve(). If omitted, diagnostics are computed
-            from an open-circuit solve at the current concentrations.
+            solve() 的输出。若为 None, 用开路 (I=0) 求解获取诊断数据。
+
+        Returns
+        -------
+        diag : dict
+            包含 phi_e/phi_s 范围、反应电流统计、活性节点数等。
         """
         if result is None:
             result = self.solve(I_app=0.0)
@@ -435,17 +440,22 @@ class SteadyStateSolver:
         }
 
     def _compute_residual(self, phi_e, phi_s, I_app):
-        """Compute only the residual vector (no Jacobian) for line search.
+        """
+        计算残差向量 (不含 Jacobian), 用于 backtracking line search。
 
         Parameters
         ----------
         phi_e : ndarray, shape (n_e,)
+            电解质电位 [V] (局部索引)。
         phi_s : ndarray, shape (n_s,)
+            固相电位 [V] (局部索引)。
         I_app : float
+            施加电流密度 [A/m²]。
 
         Returns
         -------
         res : ndarray, shape (n_e + n_s,)
+            耦合残差向量。
         """
         n_e, n_s = self.n_e, self.n_s
         N = n_e + n_s
@@ -495,27 +505,28 @@ class SteadyStateSolver:
         return res
 
     def _build_coupled_system(self, phi_e, phi_s, I_app):
-        """Build the full (n_e+n_s) coupled Jacobian and residual.
+        """
+        构建完整的 (n_e+n_s) 耦合 Jacobian 矩阵和残差向量。
 
-        The unknown vector is x = [phi_e; phi_s].
-        The residual F = [F_e; F_s] encodes charge conservation for both phases.
-        The Jacobian J = dF/dx is a 2x2 block matrix with BV coupling.
+        未知向量 x = [phi_e; phi_s]。
+        残差 F = [F_e; F_s] 编码两相的电荷守恒。
+        Jacobian J = dF/dx 是 2×2 分块矩阵, 含 BV 耦合项。
 
         Parameters
         ----------
         phi_e : ndarray, shape (n_e,)
-            Electrolyte potential at local nodes.
+            电解质电位 [V] (局部索引)。
         phi_s : ndarray, shape (n_s,)
-            Solid potential at local nodes.
+            固相电位 [V] (局部索引)。
         I_app : float
-            Applied current density [A/m²].
+            施加电流密度 [A/m²]。
 
         Returns
         -------
         J : sparse csr_matrix, shape (N, N)
-            Coupled Jacobian.
+            耦合 Jacobian 矩阵。
         res : ndarray, shape (N,)
-            Coupled residual.
+            耦合残差向量。
         """
         n_e, n_s = self.n_e, self.n_s
         N = n_e + n_s
