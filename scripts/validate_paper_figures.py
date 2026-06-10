@@ -31,11 +31,11 @@ OUT_DIR = ROOT / "data/validation"
 
 SHAPE = [5, 5, 5]
 SPACING = 1e-5
-POROSITY = 0.5
+POROSITY = 0.368
 CBD_FRACTION = 0.10
 SEED = 42
-T = 298.15
-K0 = 5e-10
+T = 303.0
+K0 = 1e-10
 C_E0 = 1200.0
 CUTOFF = 3.0
 CS_MAX = 48900.0

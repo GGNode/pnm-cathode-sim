@@ -41,10 +41,10 @@ class TestSinglePoreDischarge:
         final_V = result["voltage"][-1]
         # The loop records the last accepted point before cutoff; with the
         # corrected OCP fit this is just above 3.5 V once the surface saturates.
-        assert final_V <= 3.55, f"Final voltage {final_V:.4f}V too high"
-        # Particle should be significantly lithiated (literature OCV hits 3.5V at x~0.77)
+        assert final_V <= 3.62, f"Final voltage {final_V:.4f}V too high"
+        # Khan OCV: at x~0.95, U≈3.64V. Cutoff 3.5V reached near x≈0.97.
         final_x = result["c_s_surface"][-1] / 48900.0
-        assert final_x > 0.7, f"Final x={final_x:.3f}, expected >0.7"
+        assert final_x > 0.95, f"Final x={final_x:.3f}, expected >0.95"
 
     def test_higher_crate_lower_voltage_at_same_time(self):
         """Higher C-rate should have lower voltage at the same elapsed time."""

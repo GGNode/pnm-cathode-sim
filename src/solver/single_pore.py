@@ -113,9 +113,9 @@ class SinglePoreDischarge:
         N_shell: int = 10,
         c_s_init: float = 0.5,
         c_e: float = 1200.0,
-        T: float = 298.15,
+        T: float = 303.0,
         C_rate: float = 1.0,
-        k0: float = 5e-10,
+        k0: float = 1e-10,
         cs_max: float = 48900.0,
     ):
         """

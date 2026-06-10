@@ -88,7 +88,7 @@ class SteadyStateSolver:
     对应 DERIVATION.md §3.3 (电解质电位) 和 §3.5 (固相电位)。
     """
 
-    def __init__(self, net: op.network.Cubic, T: float = 298.15, k0: float = 5e-10):
+    def __init__(self, net: op.network.Cubic, T: float = 303.0, k0: float = 1e-10):
         """
         初始化稳态求解器。
 

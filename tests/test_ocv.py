@@ -17,11 +17,11 @@ class TestNMC532OCV:
     """Unit tests for NMC532 OCV curve."""
 
     def test_ocv_range(self):
-        """OCV should be in range [2.5, 4.5] V over the full [0,1] range."""
+        """OCV should be in range [3.0, 4.5] V (clipped Khan polynomial)."""
         xs = np.linspace(0.30, 0.99, 100)
         for x in xs:
             u = nmc532_ocv(x)
-            assert 2.5 <= u <= 4.5, f"OCV={u:.3f}V at x={x:.2f} out of range"
+            assert 3.0 <= u <= 4.5, f"OCV={u:.3f}V at x={x:.2f} out of range"
 
     def test_monotonically_decreasing(self):
         """OCV should decrease as x increases (more lithiated → lower voltage)."""
@@ -34,14 +34,14 @@ class TestNMC532OCV:
             )
 
     def test_midpoint_voltage(self):
-        """At soc=0.5, OCV should be around 3.6V (literature NMC532)."""
+        """At soc=0.5, OCV should be around 4.0V (Khan polynomial)."""
         u = nmc532_ocv(0.5)
-        assert 3.5 < u < 3.8, f"OCV at soc=0.5 = {u:.3f}V, expected ~3.6V"
+        assert 3.9 < u < 4.1, f"OCV at soc=0.5 = {u:.3f}V, expected ~4.0V"
 
     def test_37v_region(self):
-        """OCV near soc=0.85 should be around 3.4V (literature NMC532)."""
+        """OCV near soc=0.85 should be around 3.7V (Khan polynomial)."""
         u = nmc532_ocv(0.851725)
-        assert 3.3 < u < 3.5, f"OCV at soc=0.851725 = {u:.3f}V"
+        assert 3.65 < u < 3.75, f"OCV at soc=0.851725 = {u:.3f}V"
 
     def test_empty_voltage_higher_than_full(self):
         """Lower lithiation should have higher OCV than higher lithiation."""

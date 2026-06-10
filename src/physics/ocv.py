@@ -2,40 +2,40 @@
 NMC532 开路电位 (Open-Circuit Voltage) 模块
 =============================================
 
-使用基于文献的查找表 + 线性插值。
+使用 Khan et al. (2021) Eq. 2.19 多项式拟合。
+多项式在 GITT 校准窗口内有效; x<0.25 时外推到非物理负值,
+因此加 clip 到 [3.0, 4.5]V。
 
-数据来源: Xiang et al., J. Power Sources 241 (2013) 582-588
-(NMC532 vs Li/Li+, GITT measurement at 25°C)
+论文: J. Electrochem. Soc. 168 (2021) 070534
+来源: PAPER_REFERENCE.md
 
 对应 DERIVATION.md 章节: §2.5, §5.2, §7.1
 """
 
 import numpy as np
 
-# ===== NMC532 OCV 查找表 (文献数据) =====
-# x = c_s / c_s_max (锂嵌入度, 0=完全脱锂, 1=完全嵌锂)
-# U = 开路电压 vs Li/Li+ [V]
-#
-# 数据来源: Xiang et al. (2013) Fig. 3, GITT measurement
-# 物理: 脱锂越深 (x 越小), OCV 越高
-_OCV_X = np.array([
-    0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35,
-    0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75,
-    0.80, 0.85, 0.90, 0.95, 1.00,
-])
-_OCV_U = np.array([
-    4.28, 4.15, 4.03, 3.95, 3.87, 3.81, 3.75, 3.71,
-    3.68, 3.65, 3.63, 3.61, 3.59, 3.57, 3.55, 3.50,
-    3.47, 3.40, 3.30, 3.10, 2.50,
-])
+# ===== Khan et al. Eq. 2.19 多项式系数 =====
+# 注意: soc^8 系数为 -35520.41099 (论文勘误: 原文打印 -5520.41099)
+_KHAN_COEFFS = [
+    5744.862289,
+    -35520.41099,
+    95714.29862,
+    -147364.5514,
+    142718.3782,
+    -90095.81521,
+    37061.41195,
+    -9578.599274,
+    1409.309503,
+    -85.31153081,
+]
 
 
 def nmc532_ocv(soc: float | np.ndarray) -> float | np.ndarray:
     """
     计算 NMC532 的开路电压 (OCV)。
 
-    使用查找表 + 线性插值覆盖完整的 [0, 1] 范围。
-    对应 DERIVATION.md §2.5。
+    Khan et al. Eq. 2.19 多项式 + exp 修正。
+    Clip 到 [3.0, 4.5]V 防止 x<0.25 时多项式外推到负值。
 
     Parameters
     ----------
@@ -45,10 +45,19 @@ def nmc532_ocv(soc: float | np.ndarray) -> float | np.ndarray:
     Returns
     -------
     U_eq : float or array
-        平衡电位 [V], 相对于 Li/Li+ 参考电极。
+        平衡电位 [V], 相对于 Li/Li+ 参考电极.
+
+    验证值:
+    - U(0.35) ≈ 4.30V
+    - U(0.50) ≈ 4.00V
+    - U(0.90) ≈ 3.67V
+    - U(1.00) ≈ 2.94V → clip to 3.0V
     """
     soc = np.asarray(soc, dtype=float)
-    U = np.interp(soc, _OCV_X, _OCV_U)
+    U = np.polyval(_KHAN_COEFFS, soc)
+    U = U - 0.0003 * np.exp(7.657 * (soc**115))
+    # Clip: 多项式在 x<0.25 产生非物理负值, x>0.95 急剧下降
+    U = np.clip(U, 3.0, 4.5)
     return float(U) if U.ndim == 0 else U
 
 
@@ -67,6 +76,8 @@ def ocv_derivative(soc: float | np.ndarray) -> float | np.ndarray:
         dU/dx [V].
     """
     soc = np.asarray(soc, dtype=float)
-    dU_dx = np.gradient(_OCV_U, _OCV_X)
-    dU = np.interp(soc, _OCV_X, dU_dx)
+    deriv_coeffs = np.polyder(_KHAN_COEFFS)
+    dU = np.polyval(deriv_coeffs, soc)
+    # exp correction derivative
+    dU = dU - 0.0003 * 7.657 * 115 * (soc**114) * np.exp(7.657 * (soc**115))
     return float(dU) if dU.ndim == 0 else dU

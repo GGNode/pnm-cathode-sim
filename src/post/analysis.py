@@ -173,8 +173,8 @@ def discharge_curve(
     C_rate: float | None = None,
     dt: float = 10.0,
     n_steps: int = 100,
-    T: float = 298.15,
-    k0: float = 5e-10,
+    T: float = 303.0,
+    k0: float = 1e-10,
     c_e_init: float = 1200.0,
     c_s_init: float = 24450.0,
 ) -> dict:

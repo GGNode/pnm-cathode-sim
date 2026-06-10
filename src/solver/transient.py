@@ -105,7 +105,7 @@ class TransientSolver:
         固相扩散拉普拉斯矩阵 [m³/s]。含浓度依赖的 D_s(c_s)。
     """
 
-    def __init__(self, net: op.network.Cubic, T: float = 298.15, k0: float = 5e-10):
+    def __init__(self, net: op.network.Cubic, T: float = 303.0, k0: float = 1e-10):
         """
         初始化瞬态求解器。
 
