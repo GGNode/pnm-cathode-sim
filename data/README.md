@@ -1,30 +1,38 @@
-# 数据
+# 数据目录
 
-## 论文参考
+## 文件说明
 
-- `khan2021_pnm_lib_cathode.pdf` — Khan et al. (2021) 原始论文
-- `paper.pdf` — 论文副本
-
-## 论文图表
-
-`paper_figures/` — 从论文中裁剪的图表 PNG, 用于验证对比:
-
-- `figure4_crop_200dpi.png` — 0.2C、0.5C、1C、3C 的 V-Q 放电曲线
-- `figure6_crop_200dpi.png` — 1C 和 3C (75% SoL) 的空间锂化度分布
-- `figure7_crop_200dpi.png` — 电解质浓度分布
-- `page_08_200dpi.png` — `page_11_200dpi.png` — 完整页面渲染
+| 文件 | 说明 |
+|------|------|
+| `khan2021_pnm_lib_cathode.pdf` | Khan et al. 2021 原始论文 PDF |
+| `paper_figures/` | 从 PDF 提取的论文图表（用于对比验证） |
+| `validation/` | 验证结果数据（.npz, .json, .png） |
 
 ## 验证结果
 
-`validation/` — 预计算的验证输出:
+| 文件 | 说明 |
+|------|------|
+| `parallel_results.json` | 并行验证结果（16 场景：4 C-rate × 2 电流基准 × 2 隔膜状态） |
+| `discharge_*.npz` | 各倍率放电数据（时间、电压、容量） |
+| `spatial_*.npz` | 空间分布数据（浓度、电位、SoL） |
+| `figure*.png` | 论文 Figure 4/6/7 对比图 |
+| `validation_metrics.json` | 验证指标汇总 |
 
-- `discharge_*.npz` — 放电仿真结果 (0.2C、0.5C、1C、3C)
-- `spatial_*_75sol.npz` — 75% 锂化度时的空间快照
-- `figure*_comparison.png` — 生成的对比图
-- `validation_metrics.json` — 定量验证指标
-- `parallel_results.json` — 并行多场景验证结果
+## 数据格式
 
-## 备注
+### .npz 文件
 
-- 如果原始 Khan et al. (2021) NREL XCT 数据可用, 可通过 `scripts/generate_network.py` 生成几何匹配的网络。
-- 当前验证使用合成立方网络; 与论文图表的定量对比仅为定性验证。
+使用 `numpy.load()` 加载：
+
+```python
+import numpy as np
+data = np.load("data/validation/discharge_1c.npz")
+print(data.files)  # ['time', 'voltage', 'capacity', ...]
+```
+
+### 论文参考数据
+
+详见 `PAPER_REFERENCE.md`（根目录），包含：
+- Table I: XCT 图像属性
+- Table II: 模型参数
+- Figure 4/6/7: 定量数据提取

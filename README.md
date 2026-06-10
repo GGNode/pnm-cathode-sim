@@ -1,217 +1,258 @@
-# PNM-LIB-Cathode
+# pnmcathode
 
-**锂离子电池阴极孔隙网络放电模型**
+**锂离子电池阴极孔网络放电仿真工具包**
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 复现论文: Khan ZA, Elkamel A, Gostick JT. *"Pore Network Modelling of Galvanostatic Discharge Behaviour of Lithium-Ion Battery Cathodes."* J. Electrochem. Soc. 168(7), 070534 (2021).
 
+---
+
 ## 项目概述
 
-本项目实现了一个瞬态孔隙网络模型 (PNM), 用于模拟 NMC532 锂离子电池阴极的恒流放电行为。该模型将多孔电极离散化为孔隙节点 (存储物质浓度和电位) 与喉道键 (传导通量) 的图结构, 并耦合以下物理过程:
+`pnmcathode` 是一个基于孔网络模型 (PNM) 的锂电池阴极放电仿真工具包。它将多孔电极离散化为孔隙节点与喉道键的图结构，耦合以下物理过程：
 
 - **电解质盐传输** — 液相中 Li⁺ 的扩散和迁移
-- **固相锂扩散** — 球形 NMC532 颗粒中的 Fick 扩散
-- **Butler-Volmer 动力学** — 电解质/NMC 界面的电化学反应
-- **电荷守恒** — 电解质和固相中的欧姆传导
-- **隔膜边界模型** — 折叠的一维隔膜模型, 含欧姆/浓度损失
-
-## 论文引用
-
-> Khan ZA, Elkamel A, Gostick JT. "Pore Network Modelling of Galvanostatic Discharge Behaviour of Lithium-Ion Battery Cathodes." *J. Electrochem. Soc.* 168(7), 070534 (2021).
-
-## 目录结构
-
-```
-pnm-lib-cathode/
-├── src/                          # 核心库
-│   ├── __init__.py
-│   ├── network/
-│   │   └── generator.py          # 立方孔网络 + 三相标记
-│   ├── physics/
-│   │   ├── electrolyte.py        # D_e(c_e,T) 和 kappa(c_e,T) 物性相关性
-│   │   ├── ocv.py                # NMC532 OCV 多项式 (Khan Eq. 2.19)
-│   │   ├── reaction.py           # Butler-Volmer 动力学与交换电流密度
-│   │   ├── separator.py          # 折叠的一维隔膜边界模型
-│   │   └── solid.py              # 球形固相扩散 (有限体积壳层法)
-│   ├── solver/
-│   │   ├── steady.py             # 耦合 phi_e/phi_s Newton-Raphson 求解器
-│   │   ├── transient.py          # 自适应后向欧拉放电求解器
-│   │   └── single_pore.py        # 单孔放电仿真 (验证用)
-│   └── post/
-│       ├── analysis.py           # 孔径分布、锂化度、放电曲线
-│       └── visualization.py      # Matplotlib 绘图工具
-├── scripts/
-│   ├── run_discharge.py          # 单次放电 CLI 入口
-│   ├── validate_paper_figures.py # 论文图表对比 (Figure 4, 6, 7)
-│   ├── parallel_validation.py    # 多 C-rate 并行验证
-│   └── plot_results.py           # 快速 V-Q 绘图工具
-├── tests/                        # pytest 测试套件 (88 个测试)
-├── data/
-│   ├── paper_figures/            # 论文裁剪图 PNG
-│   └── validation/               # 预计算验证结果
-├── DERIVATION.md                 # 完整数学推导
-├── PAPER_REFERENCE.md            # 论文数据提取
-└── AUDIT_FINAL.md                # 最终审计报告
-```
-
-## 安装指南
-
-```bash
-# 创建并激活虚拟环境
-python -m venv .venv
-source .venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-```
-
-**依赖:** numpy, scipy, matplotlib, openpnm (>=4.0), pytest
+- **固相锂扩散** — 球形活性材料颗粒中的 Fick 扩散（浓度依赖扩散系数）
+- **Butler-Volmer 动力学** — 电解质/活性材料界面的电化学反应
+- **电荷守恒** — 电解质和固相中的欧姆传导（耦合 Newton-Raphson 求解）
+- **隔膜边界模型** — 一维折叠隔膜模型，含欧姆损失、浓度过电位、Li 箔 BV
 
 ## 快速开始
 
-在 5x5x5 网络上运行 0.2C 放电, 仅需 5 行代码:
-
-```python
-from src.network.generator import create_cathode_network
-from src.solver.transient import TransientSolver
-
-net = create_cathode_network(shape=[5, 5, 5], spacing=1e-5, porosity=0.35, seed=42)
-solver = TransientSolver(net, T=298.15, k0=5e-10)
-result = solver.run_discharge(C_rate=0.2, cutoff_voltage=3.0)
-
-print(f"Capacity: {result['capacity_Ah_m2'][-1]:.3f} Ah/m²")
-print(f"Final voltage: {result['voltage'][-1]:.3f} V")
+```bash
+git clone https://github.com/GGNode/pnm-cathode-sim.git
+cd pnm-cathode-sim
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
 ```
 
-或通过命令行运行:
+```python
+from pnmcathode import Cathode, DischargeProtocol, Simulation
+from pnmcathode.materials.presets import nmc532_khan2021, electrolyte_khan2021
 
-```bash
-python scripts/run_discharge.py --crate 0.2 --shape 5x5x5 --cutoff 3.0
+# 创建阴极 + 运行 1C 放电
+cathode = Cathode.cubic(
+    active_material=nmc532_khan2021(),
+    electrolyte=electrolyte_khan2021(),
+)
+result = Simulation(cathode, DischargeProtocol(c_rate=1.0)).run()
+
+print(f"容量: {result.final_capacity:.4f} Ah/m²")
+print(f"终止电压: {result.voltage[-1]:.3f} V")
+```
+
+## 包结构
+
+```
+pnmcathode/
+├── config.py              # 配置 dataclass（CathodeGeometry, ActiveMaterial, Electrolyte 等）
+├── cathode.py             # Cathode 类（Cathode.cubic() 工厂方法）
+├── simulation.py          # Simulation 类（一站式仿真运行）
+├── results.py             # DischargeResult（结果容器，支持 npz 序列化）
+├── analysis.py            # 分析工具
+├── plotting.py            # 绘图工具
+├── materials/
+│   └── presets.py         # 预设材料参数（Khan 2021 NMC532）
+├── network/
+│   └── generator.py       # 立方孔网络生成器 + 三相标记 + 渗流检查
+├── physics/
+│   ├── electrolyte.py     # D_e(c_e,T) 和 κ(c_e,T) 物性相关性
+│   ├── solid.py           # D_s(c_s,T) 固相扩散系数
+│   ├── reaction.py        # Butler-Volmer 动力学 + 交换电流密度
+│   ├── ocv.py             # NMC532 开路电位（Khan 多项式）
+│   └── separator.py       # 折叠一维隔膜边界模型
+├── solver/
+│   ├── steady.py          # 稳态电位求解器（耦合 Newton-Raphson）
+│   ├── transient.py       # 瞬态放电求解器（自适应时间步进）
+│   └── single_pore.py     # 单孔参考模型
+└── post/
+    ├── analysis.py        # 后处理分析
+    └── visualization.py   # 可视化工具
 ```
 
 ## 使用指南
 
-### 单次放电 (`scripts/run_discharge.py`)
+### 基本放电
 
-```bash
-python scripts/run_discharge.py --crate 1.0 --shape 10x10x10 --cutoff 2.5 --output data/1c.npz
+```python
+from pnmcathode import Cathode, DischargeProtocol, Simulation
+from pnmcathode.materials.presets import nmc532_khan2021, electrolyte_khan2021
+
+cathode = Cathode.cubic(
+    active_material=nmc532_khan2021(),
+    electrolyte=electrolyte_khan2021(),
+)
+result = Simulation(cathode, DischargeProtocol(c_rate=1.0, cutoff_voltage=2.5)).run()
 ```
 
-主要参数: `--crate`, `--cutoff`, `--shape`, `--spacing`, `--porosity`, `--k0`, `--temperature`, `--output`
+### 自定义阴极几何
 
-### 论文验证 (`scripts/validate_paper_figures.py`)
+```python
+from pnmcathode.config import CathodeGeometry
 
-在 10x10x10 网络上运行 0.2C/0.5C/1C/1C/3C 放电, 生成与论文 Figure 4、6、7 的对比图:
-
-```bash
-python scripts/validate_paper_figures.py
+geometry = CathodeGeometry(
+    shape=(13, 13, 13),       # 网格尺寸
+    spacing=1e-5,             # 节点间距 [m]
+    porosity=0.368,           # 孔隙率
+    cbd_fraction=0.1392,      # CBD 体积分数
+    seed=42,                  # 随机种子（可复现）
+)
+cathode = Cathode.cubic(geometry=geometry, ...)
 ```
 
-### 并行验证 (`scripts/parallel_validation.py`)
+### 自定义材料
 
-在 13x13x13 网络上并行运行 4 个 C-rate x 4 种场景 (论文/网络电流基准, 隔膜开/关):
+```python
+from pnmcathode.config import ActiveMaterial, Electrolyte
 
-```bash
-python scripts/parallel_validation.py
+my_material = ActiveMaterial(
+    name="LFP",
+    cs_max=22806.0,           # 最大锂浓度 [mol/m³]
+    sigma=0.1,                # 电子导电率 [S/m]
+    diffusivity=my_D_s,       # D_s(c_s, T) 函数
+    ocv=my_ocv_curve,         # OCV(soc) 函数
+)
+```
+
+### 多倍率扫描
+
+```python
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots()
+for c_rate in [0.2, 0.5, 1.0, 3.0]:
+    result = Simulation(cathode, DischargeProtocol(c_rate=c_rate)).run()
+    ax.plot(result.capacity_Ah_m2, result.voltage, label=f"{c_rate}C")
+ax.set_xlabel("容量 [Ah/m²]")
+ax.set_ylabel("电压 [V]")
+ax.legend()
+plt.show()
+```
+
+### 隔膜模型
+
+```python
+from pnmcathode.config import Separator
+
+separator = Separator(enabled=True, thickness=25e-6, porosity=0.39)
+result = Simulation(cathode, protocol, separator=separator).run()
+```
+
+### 结果保存与加载
+
+```python
+result.to_npz("discharge_1c.npz")
+loaded = DischargeResult.from_npz("discharge_1c.npz")
 ```
 
 ## 物理模型概述
 
-### 控制方程
-
-| 方程 | 描述 | 参考 |
-|------|------|------|
-| `∂c_e/∂t = ∇·(D_e,eff ∇c_e) + S_e` | 电解质盐守恒 | §3.2 |
-| `∇·(κ_eff ∇φ_e) = a_s·i_F` | 电解质电荷守恒 | §2.2, §3.3 |
-| `∂c_s/∂t = ∇·(D_s ∇c_s)` | 固相锂扩散 (球坐标) | §2.3, §3.4 |
-| `∇·(σ_eff ∇φ_s) = -a_s·i_F` | 固相电荷守恒 | §2.4, §3.5 |
-| `i_r = i0·[exp(α_a f η) - exp(-α_c f η)]` | Butler-Volmer 动力学 | §2.5 |
-| `η = φ_s - φ_e - U_eq(c_s)` | 过电位 | §2.5 |
-
-### 关键材料参数 (Khan et al. Table II)
-
-| 参数 | 符号 | 值 | 单位 |
-|------|------|----|------|
-| NMC532 最大锂浓度 | c_s,max | 48,900 | mol/m³ |
-| NMC 电导率 | σ_nmc | 0.01 | S/m |
-| CBD 电导率 | σ_cbd | 760 | S/m |
-| 反应速率常数 | k0 | 5×10⁻¹⁰ | m²·⁵/(mol⁰·⁵·s) |
-| 交换电流密度 | i0 | ~10⁻³ | A/m² |
-| NMC 中锂扩散系数 | D_s | ~10⁻¹⁵ | m²/s |
-| 电解质扩散系数 | D_e | ~10⁻¹⁰ | m²/s |
-
-### 离散化方案
-
-- **网络**: 立方晶格 + 三相随机标记 (电解质/NMC/CBD)
-- **固相扩散**: 球形颗粒的 N 壳层有限体积法
-- **电位求解**: 耦合 Newton-Raphson + 回溯线搜索
-- **时间推进**: 后向欧拉 + 自适应步长 (增长/收缩/拒绝)
+| 模型 | 方程 | 代码位置 |
+|------|------|---------|
+| 电解质扩散 | D_Li⁺ = 10^(-4.43 - 54/(T-229-5c) - 0.22c) | `physics/electrolyte.py` |
+| 电解质电导 | κ = c·(-10.5 + 0.074T - ...)² | `physics/electrolyte.py` |
+| 固相扩散 | D_s = 10^(多项式(soc)) | `physics/solid.py` |
+| OCV | Khan 9阶多项式 + exp修正 | `physics/ocv.py` |
+| 反应动力学 | Butler-Volmer: i_r = i0·[exp(α_a·F·η/RT) - exp(-α_c·F·η/RT)] | `physics/reaction.py` |
+| 隔膜 | 1D 折叠边界：Ohmic + Nernst + Li箔 BV | `physics/separator.py` |
+| 电位求解 | 耦合 Newton-Raphson（phi_e + phi_s） | `solver/steady.py` |
+| 时间推进 | Backward Euler + 自适应步长 | `solver/transient.py` |
 
 ## 配置参数参考
 
-所有可调参数 (含默认值):
+### CathodeGeometry
 
-| 参数 | 默认值 | 描述 |
+| 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `shape` | [5,5,5] | 网络维度 [nx, ny, nz] |
-| `spacing` | 1e-5 m | 孔间距 |
-| `porosity` | 0.35 | 电解质体积分数 |
+| `shape` | (10,10,10) | 网格尺寸 [Nx, Ny, Nz] |
+| `spacing` | 1e-5 | 节点间距 [m] |
+| `porosity` | 0.35 | 孔隙率（电解质体积分数） |
 | `cbd_fraction` | 0.10 | CBD 体积分数 |
-| `T` | 298.15 K | 温度 |
-| `k0` | 5e-10 | BV 反应速率常数 |
-| `c_e_init` | 1200 mol/m³ | 初始电解质浓度 |
-| `c_s_init` | 24450 mol/m³ | 初始固相浓度 (x≈0.5) |
-| `cutoff_voltage` | 2.5 V | 放电截止电压 |
-| `dt_min` | 1e-6 s | 最小自适应时间步 |
-| `dt_max` | 300 s | 最大自适应时间步 |
+| `seed` | None | 随机种子 |
+| `throat_scale` | 1.0 | 喉道直径缩放因子 |
 
-## 测试套件
+### DischargeProtocol
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `c_rate` | — | 放电倍率（必填） |
+| `cutoff_voltage` | 2.5 | 截止电压 [V] |
+| `initial_soc` | 0.5 | 初始荷电状态 |
+| `max_steps` | 1000 | 最大时间步数 |
+
+### SolverSettings
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `temperature` | 298.15 | 温度 [K] |
+| `dt` | None | 初始时间步（None=自动估计） |
+| `dt_max` | 300.0 | 最大时间步 [s] |
+| `newton_tol` | 1e-8 | Newton 迭代收敛容差 |
+
+## 测试
 
 ```bash
 # 运行全部测试
 python -m pytest tests/ -q
 
-# 详细输出
-python -m pytest tests/ -v
+# 只运行 API 测试
+python -m pytest tests/test_toolkit_api.py -v
 
-# 运行指定模块
-python -m pytest tests/test_transient.py -v
+# 运行物理测试
+python -m pytest tests/test_separator.py tests/test_electrolyte.py -v
 ```
 
-**测试覆盖 (88 个测试):**
-- Butler-Volmer 动力学与交换电流密度
-- OCV 多项式及其导数
-- 电解质传输物性相关性
-- 固相扩散 (球坐标有限体积法)
-- 网络生成与渗透性检查
-- 稳态 Newton-Raphson 求解器
-- 瞬态求解器自适应步进
-- 单孔放电验证
+测试覆盖：
+- Butler-Volmer 动力学符号和对称性
+- 电解质物性函数（D_e, κ）
+- 固相扩散系数
+- OCV 曲线和导数
+- 网络生成和渗流检查
+- 稳态求解器收敛
+- 瞬态放电物理守恒
 - 隔膜边界模型
-- 后处理分析工具
+- 包 API 端到端测试
+
+## 论文复现
+
+论文复现脚本位于 `examples/reproduce_khan2021/`：
+
+```bash
+cd examples/reproduce_khan2021
+python validate_paper_figures.py    # 生成 Figure 4/6/7 对比图
+python parallel_validation.py       # 并行多倍率验证
+```
 
 ## 已知限制
 
-1. **合成网络 vs XCT**: 论文使用 XCT 重建的阴极微结构 (1CAL: 4637 节点, 31427 喉道)。本模型使用合成立方网络和随机相标记。几何结构差异显著, 导致:
-   - 不同的质量负载和活性面积
-   - 不同的相连通性和渗透率
-   - 定量的容量/极化不匹配 (尤其在高 C-rate 下)
+| 限制 | 说明 |
+|------|------|
+| 合成网络 | 使用随机立方网络而非 XCT 真实微结构 |
+| 质量负载 | 合成网络质量负载低于论文 XCT 网络（~150 vs 298 g/m²） |
+| 低倍率截止 | 合成网络在低 C-rate 下可能无法达到截止电压 |
+| 隔膜模型 | 简化的一维折叠边界，非完整耦合隔膜网格 |
 
-2. **质量负载差距**: 合成网络的面积比容量低于 XCT 网络, 原因是体积-面积比和活性位点连通性不同。
+## 相关文档
 
-3. **隔膜模型**: 折叠的一维准稳态模型 — 适用于毫伏级损失, 但非完整的二维/三维隔膜仿真。
-
-4. **等温假设**: 温度均匀恒定 (无热耦合)。
-
-5. **无退化模型**: 未建模 SEI 生长、颗粒开裂和容量衰减。
+- `docs/TOOLKIT_DESIGN.md` — 工具包架构设计
+- `docs/TOOLKIT_EXECUTION.md` — 迁移执行方案
+- `docs/AUDIT_FINAL.md` — 最终代码审计
+- `DERIVATION.md` — 数学推导
+- `PAPER_REFERENCE.md` — 论文数据提取
 
 ## 引用
 
-如果使用本代码, 请引用:
-
-> Khan ZA, Elkamel A, Gostick JT. "Pore Network Modelling of Galvanostatic Discharge Behaviour of Lithium-Ion Battery Cathodes." *J. Electrochem. Soc.* 168(7), 070534 (2021).
-
-## 参考文献
-
-- [DERIVATION.md](DERIVATION.md) — 完整数学推导
-- [PAPER_REFERENCE.md](PAPER_REFERENCE.md) — 论文数据提取
-- [AUDIT_FINAL.md](AUDIT_FINAL.md) — 最终审计报告
+```bibtex
+@article{khan2021pore,
+  title={Pore Network Modelling of Galvanostatic Discharge Behaviour of Lithium-Ion Battery Cathodes},
+  author={Khan, Zaid A and Elkamel, Ali and Gostick, Jeffrey T},
+  journal={Journal of The Electrochemical Society},
+  volume={168},
+  number={7},
+  pages={070534},
+  year={2021},
+  publisher={IOP Publishing}
+}
+```
