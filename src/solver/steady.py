@@ -21,19 +21,22 @@
 - A_r: 反应界面面积 [m²]
 - F_{BC,m}^s: 集流体边界电流贡献
 
-线性化求解策略
---------------
-由于 Butler-Volmer 方程的非线性, 采用逐次超松弛 (SOR) 迭代:
+耦合 Newton-Raphson 求解策略
+----------------------------
+由于 Butler-Volmer 方程的强非线性耦合, 采用耦合 Newton-Raphson 迭代:
 
-1. 在当前电位下计算 BV 的线性化电导:
-    g_bv = dI/deta * A_r
-    其中 dI/deta = i0 * F/(RT) * (alpha_a * exp(arg_a) + alpha_c * exp(arg_c))
+未知向量 x = [phi_e; phi_s], 长度 n_e + n_s。
+残差向量 F = [F_e; F_s]。
+Jacobian J = dF/dx 是 2×2 分块矩阵:
+    J = [ J_ee  J_es ]
+        [ J_se  J_ss ]
+其中:
+    J_ee = L_e - diag(g_bv_e)   (电解质 Laplacian 减 BV 电导)
+    J_es = +g_bv at interface    (BV 耦合)
+    J_se = -g_bv at interface    (BV 耦合)
+    J_ss = L_s - diag(g_bv_s)   (固相 Laplacian 减 BV 电导)
 
-2. 将 BV 反应视为电导耦合项:
-    电解质方程: (L_e - diag(g_bv_e)) @ phi_e + g_bv @ phi_s = rhs_e
-    固相方程:   (L_s - diag(g_bv_s)) @ phi_s + g_bv @ phi_e = rhs_s
-
-3. 求解线性系统, 更新电位
+每步求解 J @ dx = -F, 更新 x += alpha * dx (含 backtracking line search)。
 
 符号约定 (Sign Convention)
 --------------------------
@@ -80,7 +83,7 @@ class SteadyStateSolver:
     孔网络上的稳态电位求解器。
 
     求解耦合的电解质/固相电位分布, 使用 Butler-Volmer 反应耦合。
-    采用线性化 + SOR 迭代策略处理 BV 非线性。
+    采用耦合 Newton-Raphson 迭代策略处理 BV 非线性。
 
     对应 DERIVATION.md §3.3 (电解质电位) 和 §3.5 (固相电位)。
     """
@@ -340,20 +343,216 @@ class SteadyStateSolver:
         self._ie_e_g = np.array([ie[0] for ie in self.reactive_interfaces], dtype=int)
         self._ie_s_g = np.array([ie[1] for ie in self.reactive_interfaces], dtype=int)
 
+    def _compute_residual(self, phi_e, phi_s, I_app):
+        """Compute only the residual vector (no Jacobian) for line search.
+
+        Parameters
+        ----------
+        phi_e : ndarray, shape (n_e,)
+        phi_s : ndarray, shape (n_s,)
+        I_app : float
+
+        Returns
+        -------
+        res : ndarray, shape (n_e + n_s,)
+        """
+        n_e, n_s = self.n_e, self.n_s
+        N = n_e + n_s
+        n_intf = len(self.reactive_interfaces)
+
+        res = np.zeros(N)
+        res[:n_e] = self.L_e @ phi_e
+        res[n_e:N] = self.L_s @ phi_s
+
+        if n_intf > 0:
+            phi_e_intf = phi_e[self._ie_e]
+            phi_s_intf = phi_s[self._ie_s]
+            cs = self.c_s[self._ie_s_g]
+            ce = self.c_e[self._ie_e_g]
+            x_j = np.clip(cs / 48900.0, 0.01, 0.99)
+            U_eq = nmc532_ocv(x_j)
+            U_eq = np.clip(U_eq, 2.5, 4.5)
+            i0 = np.array([
+                exchange_current_density(self.k0, ce[k], cs[k], 48900.0)
+                for k in range(n_intf)
+            ])
+            eta = phi_s_intf - phi_e_intf - U_eq
+            I_rxn_intf = np.array([butler_volmer(i0[k], eta[k], self.T) for k in range(n_intf)])
+            A_intf = self._ie_A
+            rxn_flux = I_rxn_intf * A_intf
+            np.add.at(res[:n_e], self._ie_e, rxn_flux)
+            np.add.at(res[n_e:N], self._ie_s, -rxn_flux)
+
+        # Current BC on solid at collector
+        if len(self.active_cc_s) > 0:
+            res[n_e + self.active_cc_s] += I_app * self._cc_area / len(self.active_cc_s)
+
+        # Dirichlet BCs: separator electrolyte = 0
+        for i in self.sep_e:
+            res[i] = phi_e[i]
+        # Inactive electrolyte nodes: pin to 0
+        for i in range(n_e):
+            if not self.active_e[i]:
+                res[i] = phi_e[i]
+        # Inactive solid nodes: pin to OCV
+        for i in range(n_s):
+            if not self.active_s[i]:
+                x_i = np.clip(self.c_s[self.s_indices[i]] / 48900.0, 0.01, 0.99)
+                U_i = np.clip(nmc532_ocv(x_i), 2.5, 4.5)
+                res[n_e + i] = phi_s[i] - U_i
+
+        return res
+
+    def _build_coupled_system(self, phi_e, phi_s, I_app):
+        """Build the full (n_e+n_s) coupled Jacobian and residual.
+
+        The unknown vector is x = [phi_e; phi_s].
+        The residual F = [F_e; F_s] encodes charge conservation for both phases.
+        The Jacobian J = dF/dx is a 2x2 block matrix with BV coupling.
+
+        Parameters
+        ----------
+        phi_e : ndarray, shape (n_e,)
+            Electrolyte potential at local nodes.
+        phi_s : ndarray, shape (n_s,)
+            Solid potential at local nodes.
+        I_app : float
+            Applied current density [A/m²].
+
+        Returns
+        -------
+        J : sparse csr_matrix, shape (N, N)
+            Coupled Jacobian.
+        res : ndarray, shape (N,)
+            Coupled residual.
+        """
+        n_e, n_s = self.n_e, self.n_s
+        N = n_e + n_s
+        n_intf = len(self.reactive_interfaces)
+
+        # ===== Compute BV quantities at interfaces =====
+        if n_intf > 0:
+            phi_e_intf = phi_e[self._ie_e]
+            phi_s_intf = phi_s[self._ie_s]
+            cs = self.c_s[self._ie_s_g]
+            ce = self.c_e[self._ie_e_g]
+            x_j = np.clip(cs / 48900.0, 0.01, 0.99)
+
+            U_eq = nmc532_ocv(x_j)
+            # Clip U_eq to physically reasonable range for NMC532
+            U_eq = np.clip(U_eq, 2.5, 4.5)
+            i0 = np.array([
+                exchange_current_density(self.k0, ce[k], cs[k], 48900.0)
+                for k in range(n_intf)
+            ])
+            eta = phi_s_intf - phi_e_intf - U_eq
+            I_rxn_intf = np.array([butler_volmer(i0[k], eta[k], self.T) for k in range(n_intf)])
+
+            # Linearized BV conductance: d(I_rxn * A)/d(eta)
+            f_val = F / (R * self.T)
+            arg_a = np.clip(0.5 * f_val * eta, -500, 500)
+            arg_c = np.clip(-0.5 * f_val * eta, -500, 500)
+            dI_deta = i0 * (0.5 * f_val * np.exp(arg_a) + 0.5 * f_val * np.exp(arg_c))
+            g_bv = dI_deta * self._ie_A
+        else:
+            I_rxn_intf = np.array([])
+            g_bv = np.array([])
+            U_eq = np.array([])
+
+        # ===== Build residual =====
+        res = np.zeros(N)
+
+        # Electrolyte residual: F_e[i] = (L_e @ phi_e)[i] + Σ_r i_rxn * A_r
+        res[:n_e] = self.L_e @ phi_e
+        if n_intf > 0:
+            rxn_flux = I_rxn_intf * self._ie_A
+            np.add.at(res[:n_e], self._ie_e, rxn_flux)
+
+        # Solid residual: F_s[m] = (L_s @ phi_s)[m] - Σ_r i_rxn * A_r
+        res[n_e:N] = self.L_s @ phi_s
+        if n_intf > 0:
+            np.add.at(res[n_e:N], self._ie_s, -rxn_flux)
+
+        # Current BC on solid at collector
+        if len(self.active_cc_s) > 0:
+            res[n_e + self.active_cc_s] += I_app * self._cc_area / len(self.active_cc_s)
+
+        # ===== Build Jacobian J using block assembly =====
+        # J = [J_ee  J_es]
+        #     [J_se  J_ss]
+
+        # J_ee = L_e - diag(g_bv_e)
+        J_ee = self.L_e.copy()
+        if n_intf > 0:
+            g_bv_e = np.zeros(n_e)
+            np.add.at(g_bv_e, self._ie_e, g_bv)
+            J_ee = J_ee - sparse.diags(g_bv_e, 0, shape=(n_e, n_e))
+
+        # J_ss = L_s - diag(g_bv_s)
+        J_ss = self.L_s.copy()
+        if n_intf > 0:
+            g_bv_s = np.zeros(n_s)
+            np.add.at(g_bv_s, self._ie_s, g_bv)
+            J_ss = J_ss - sparse.diags(g_bv_s, 0, shape=(n_s, n_s))
+
+        # Off-diagonal coupling: J_es and J_se
+        if n_intf > 0:
+            J_es = sparse.coo_matrix(
+                (g_bv, (self._ie_e, self._ie_s)), shape=(n_e, n_s)
+            ).tocsr()
+            J_se = sparse.coo_matrix(
+                (g_bv, (self._ie_s, self._ie_e)), shape=(n_s, n_e)
+            ).tocsr()
+        else:
+            J_es = sparse.csr_matrix((n_e, n_s))
+            J_se = sparse.csr_matrix((n_s, n_e))
+
+        # Assemble 2x2 block Jacobian
+        J = sparse.bmat([[J_ee, J_es], [J_se, J_ss]], format='csr')
+
+        # ===== Apply Dirichlet BCs =====
+        # Use diagonal masking: for BC row i, replace J[i,:] with e_i^T
+        # J_bc = diag(1 - mask) @ J + diag(mask)
+        # This avoids the slow lil_matrix row-zeroing.
+
+        bc_mask = np.zeros(N)
+        # Separator electrolyte: phi_e = 0
+        for i in self.sep_e:
+            bc_mask[i] = 1.0
+            res[i] = phi_e[i]
+        # Inactive electrolyte nodes: pin to 0
+        for i in range(n_e):
+            if not self.active_e[i]:
+                bc_mask[i] = 1.0
+                res[i] = phi_e[i]
+        # Inactive solid nodes: pin to OCV
+        for i in range(n_s):
+            if not self.active_s[i]:
+                bc_mask[n_e + i] = 1.0
+                x_i = np.clip(self.c_s[self.s_indices[i]] / 48900.0, 0.01, 0.99)
+                U_i = np.clip(nmc532_ocv(x_i), 2.5, 4.5)
+                res[n_e + i] = phi_s[i] - U_i
+
+        # Apply: J = diag(1-mask) @ J + diag(mask)
+        # This zeros out BC rows and sets diagonal to 1
+        keep_diag = sparse.diags(1.0 - bc_mask)
+        bc_diag = sparse.diags(bc_mask)
+        J = keep_diag @ J + bc_diag
+
+        return J.tocsr(), res
+
     def solve(self, I_app: float = 0.0, tol: float = 1e-12, max_iter: int = 100) -> dict:
         """
-        使用逐次超松弛 (SOR) 求解线性化 BV 系统。
+        使用耦合 Newton-Raphson 求解 BV 系统。
 
         对应 DERIVATION.md §5.1, §5.3, §5.6。
 
+        未知向量 x = [phi_e; phi_s], 残差 F = [F_e; F_s]。
         每次迭代:
-        1. 在当前电位下计算 BV 线性化电导 g_bv = dI/deta * A_r
-        2. 构建包含 BV Jacobian 的耦合算子
-        3. 求解线性系统
-
-        Butler-Volmer 线性化 (对应 DERIVATION.md §5.2):
-            i_r ≈ i_r^0 + (dI/deta) * (eta - eta^0)
-            其中 dI/deta = i0 * F/(RT) * (alpha_a * E_a + alpha_c * E_c)
+        1. 构建耦合 Jacobian J 和残差 F
+        2. 求解 J @ dx = -F
+        3. Backtracking line search (Armijo): x_new = x + alpha * dx
+        4. 收敛检查: max|dx| < tol 且 residual < tol
 
         Parameters
         ----------
@@ -377,21 +576,15 @@ class SteadyStateSolver:
             - converged: 是否收敛
         """
         n_e, n_s = self.n_e, self.n_s
-        n_intf = len(self.reactive_interfaces)
+        N = n_e + n_s
 
-        # ===== Dirichlet 初始值 =====
-        # 电解质: phi_e = 0 V (隔膜端参考电位)
-        phi_e_bc = np.zeros(n_e)
-        # 固相: phi_s = U(x) (平衡态, OCV)
-        phi_s_bc = np.array([
+        # ===== 初始值 =====
+        phi_e = np.zeros(n_e)
+        phi_s = np.array([
             nmc532_ocv(self.c_s[self.s_indices[i]] / 48900.0) for i in range(n_s)
         ])
 
-        phi_e = phi_e_bc.copy()
-        phi_s = phi_s_bc.copy()
-
         # ===== 零电流快速返回 =====
-        # 对应 DERIVATION.md §7.1: "Zero-Current Equilibrium (0C)"
         if abs(I_app) < tol:
             phi_e_full = np.full(self.Np, np.nan)
             phi_s_full = np.full(self.Np, np.nan)
@@ -401,8 +594,6 @@ class SteadyStateSolver:
                 if self.solid_mask[g]:
                     phi_s_full[g] = phi_s[self.s_map[g]]
 
-            # V_cell = phi_s(collector) - phi_e(separator)
-            # 对应 DERIVATION.md §4.5
             voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
             if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
                 V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
@@ -418,149 +609,70 @@ class SteadyStateSolver:
                 "converged": True,
             }
 
+        # Warm-start from previous solution
         if self._phi_e_guess is not None and self._phi_e_guess.shape == (n_e,):
             phi_e = self._phi_e_guess.copy()
         if self._phi_s_guess is not None and self._phi_s_guess.shape == (n_s,):
             phi_s = self._phi_s_guess.copy()
 
-        # ===== SOR 迭代 =====
+        # ===== Newton-Raphson iteration =====
+        x = np.concatenate([phi_e, phi_s])
         converged = False
         iteration = 0
+
         for iteration in range(max_iter):
-            # --- 步骤 1: 计算界面 BV 量 ---
-            if n_intf > 0:
-                phi_e_intf = phi_e[self._ie_e]  # 界面处电解质电位
-                phi_s_intf = phi_s[self._ie_s]  # 界面处固相电位
-                cs = self.c_s[self._ie_s_g]     # 界面处固相浓度
-                ce = self.c_e[self._ie_e_g]     # 界面处电解质浓度
-                x_j = cs / 48900.0              # 嵌锂度
+            phi_e_cur = x[:n_e]
+            phi_s_cur = x[n_e:]
 
-                # 平衡电位
-                U_eq = nmc532_ocv(x_j)
-                # 交换电流密度
-                i0 = np.array([
-                    exchange_current_density(self.k0, ce[k], cs[k], 48900.0)
-                    for k in range(n_intf)
-                ])
-                # 过电位: eta = phi_s - phi_e - U
-                # 对应 DERIVATION.md §2.5
-                eta = phi_s_intf - phi_e_intf - U_eq
-                # BV 反应电流
-                I_rxn = np.array([butler_volmer(i0[k], eta[k], self.T) for k in range(n_intf)])
+            J, res = self._build_coupled_system(phi_e_cur, phi_s_cur, I_app)
+            res_norm = np.linalg.norm(res)
 
-                # 线性化电导: dI/deta
-                # 对应 DERIVATION.md §5.2: B = d i/d eta = i0 f (alpha_a E_a + alpha_c E_c)
-                f_val = F / (R * self.T)  # F/(RT) [V^{-1}]
-                arg_a = np.clip(0.5 * f_val * eta, -500, 500)
-                arg_c = np.clip(-0.5 * f_val * eta, -500, 500)
-                dI_deta = i0 * (0.5 * f_val * np.exp(arg_a) + 0.5 * f_val * np.exp(arg_c))
-                # g_bv: 类似电导的 BV 耦合项 [S = A/V]
-                g_bv = dI_deta * self._ie_A  # [A/V * m² = S?]
-            else:
-                I_rxn = np.array([])
-                g_bv = np.array([])
-
-            # --- 步骤 2: 构建耦合系统 ---
-            # 对应 DERIVATION.md §5.3: Jacobian Contributions from One Interface
-
-            # 电解质块: (L_e - diag(g_bv_e)) @ phi_e + off-diag
-            # 对应 DERIVATION.md §3.3: F_{phi_e} = Σ G(phi_k - phi_i) + Σ i_r A_r
-            # 线性化后: i_r A_r ≈ g_bv * (phi_s - phi_e - U_eq)
-            # 对 phi_e 的 Jacobian 贡献: -g_bv (对角线)
-            # 对 phi_s 的 Jacobian 贡献: +g_bv (非对角线)
-
-            # 汇总每个电解质节点的 g_bv
-            g_bv_e = np.zeros(n_e)
-            if n_intf > 0:
-                np.add.at(g_bv_e, self._ie_e, g_bv)
-
-            # 修改电解质 Laplacian: L_e - diag(g_bv_e)
-            M_e = self.L_e.tolil()
-            for i in range(n_e):
-                M_e[i, i] -= g_bv_e[i]
-            M_e = M_e.tocsr()
-
-            # 电解质 RHS: -Σ(g_bv * (phi_s - U_eq))
-            rhs_e = np.zeros(n_e)
-            if n_intf > 0:
-                bv_source = g_bv * (phi_s[self._ie_s] - U_eq)
-                np.add.at(rhs_e, self._ie_e, -bv_source)
-
-            # 固相块: (L_s + diag(g_bv_s)) @ phi_s - off-diag
-            # 对应 DERIVATION.md §3.5: F_{phi_s} = Σ G(phi_n - phi_m) - Σ i_r A_r + F_BC
-            # 线性化后: -i_r A_r ≈ -g_bv * (phi_s - phi_e - U_eq)
-            # 对 phi_s 的 Jacobian 贡献: -g_bv (对角线)
-            # 对 phi_e 的 Jacobian 贡献: +g_bv (非对角线)
-
-            g_bv_s = np.zeros(n_s)
-            if n_intf > 0:
-                np.add.at(g_bv_s, self._ie_s, g_bv)
-
-            # 修改固相 Laplacian: L_s - diag(g_bv_s)
-            M_s = self.L_s.tolil()
-            for i in range(n_s):
-                M_s[i, i] -= g_bv_s[i]
-            M_s = M_s.tocsr()
-
-            # 固相 RHS: -Σ(g_bv * (phi_e + U_eq))
-            rhs_s = np.zeros(n_s)
-            if n_intf > 0:
-                bv_sink = g_bv * (phi_e[self._ie_e] + U_eq)
-                np.add.at(rhs_s, self._ie_s, -bv_sink)
-
-            # 施加电流边界条件 (集流体端固相)
-            # 对应 DERIVATION.md §4.2: F_{BC,m}^s = I_app * w_m
-            # I_app 是电流密度 [A/m²], 需要乘以集流体面积
-            if len(self.active_cc_s) > 0:
-                rhs_s[self.active_cc_s] -= I_app * self._cc_area / len(self.active_cc_s)
-
-            # ===== Dirichlet 边界条件 =====
-            # 对应 DERIVATION.md §5.5: "replace the corresponding residual row by F_y = y - y_B = 0"
-
-            # 电解质 Dirichlet: 隔膜端 phi_e = 0
-            M_e = M_e.tolil()
-            for i in self.sep_e:
-                M_e[i, :] = 0; M_e[i, i] = 1.0
-                rhs_e[i] = phi_e_bc[i]
-            # 未连通的电解质节点也固定
-            for i in range(n_e):
-                if not self.active_e[i] or M_e[i, :].nnz == 0:
-                    M_e[i, :] = 0
-                    M_e[i, i] = 1.0; rhs_e[i] = 0.0
-            M_e = M_e.tocsr()
-
-            # 固相 Dirichlet: 未连通的节点固定到 OCV
-            M_s = M_s.tolil()
-            for i in range(n_s):
-                if not self.active_s[i] or M_s[i, :].nnz == 0:
-                    M_s[i, :] = 0
-                    M_s[i, i] = 1.0; rhs_s[i] = phi_s_bc[i]
-            M_s = M_s.tocsr()
-
-            # ===== 求解线性系统 =====
+            # Solve J @ dx = -res
             try:
-                phi_e_new = spsolve(M_e, rhs_e)
+                dx = spsolve(J, -res)
             except Exception:
-                phi_e_new = phi_e.copy()
-            try:
-                phi_s_new = spsolve(M_s, rhs_s)
-            except Exception:
-                phi_s_new = phi_s.copy()
-
-            # ===== 欠松弛更新 (SOR) =====
-            # 使用 alpha=0.5 的欠松弛提高稳定性
-            alpha = 0.5
-            de = np.max(np.abs(phi_e_new - phi_e))
-            ds = np.max(np.abs(phi_s_new - phi_s))
-            phi_e = (1 - alpha) * phi_e + alpha * phi_e_new
-            phi_s = (1 - alpha) * phi_s + alpha * phi_s_new
-
-            # 收敛检查
-            if max(de, ds) < tol:
-                converged = True
                 break
 
-        # ===== 构建全网络输出 =====
+            # Check for NaN/Inf in dx
+            if not np.all(np.isfinite(dx)):
+                break
+
+            # Backtracking line search (Armijo condition)
+            alpha = 1.0
+            dx_norm = np.max(np.abs(dx))
+            for _ in range(15):
+                x_trial = x + alpha * dx
+                pe_t = x_trial[:n_e]
+                ps_t = x_trial[n_e:]
+                # Check for NaN/Inf in trial
+                if not (np.all(np.isfinite(pe_t)) and np.all(np.isfinite(ps_t))):
+                    alpha *= 0.5
+                    continue
+                res_trial = self._compute_residual(pe_t, ps_t, I_app)
+                trial_norm = np.linalg.norm(res_trial)
+                if trial_norm < res_norm * (1.0 - 1e-4 * alpha):
+                    break
+                alpha *= 0.5
+
+            x_new = x + alpha * dx
+
+            # Check for NaN/Inf
+            if not np.all(np.isfinite(x_new)):
+                break
+
+            # Convergence check on step size
+            if np.max(np.abs(alpha * dx)) < tol:
+                converged = True
+                x = x_new
+                break
+
+            x = x_new
+
+        # Extract final potentials
+        phi_e = x[:n_e]
+        phi_s = x[n_e:]
+
+        # ===== Build full-network output =====
         if converged:
             self._phi_e_guess = phi_e.copy()
             self._phi_s_guess = phi_s.copy()
@@ -573,15 +685,14 @@ class SteadyStateSolver:
             if self.solid_mask[g]:
                 phi_s_full[g] = phi_s[self.s_map[g]]
 
-        # 电池电压: V_cell = phi_s(collector) - phi_e(separator)
-        # 对应 DERIVATION.md §4.5
+        # Cell voltage: V_cell = phi_s(collector) - phi_e(separator)
         voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
         if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
             V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
         else:
             V_cell = 0.0
 
-        # 计算所有喉道的反应电流
+        # Compute reaction currents for all throats
         I_rxn_all = np.zeros(self.Nt)
         reactive_pairs = {(e_g, s_g) for e_g, s_g, _area in self.reactive_interfaces}
         for t in range(self.Nt):
