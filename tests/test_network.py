@@ -10,7 +10,7 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.network.generator import create_cathode_network
+from src.network.generator import check_percolation, create_cathode_network
 
 
 class TestCathodeNetwork:
@@ -108,3 +108,27 @@ class TestCathodeNetwork:
         n_cbd = np.sum(labels == 2)
         assert n_nmc > 0, "No NMC pores assigned"
         assert n_cbd > 0, "No CBD pores assigned"
+
+    def test_electrolyte_percolation_check(self):
+        """Electrolyte percolation should require a same-phase x path."""
+        net = create_cathode_network(shape=[3, 1, 1], spacing=1e-5, porosity=1.0, cbd_fraction=0.0)
+        assert check_percolation(net, phase="electrolyte")
+
+        labels = np.array([0, 1, 0])
+        net["pore.phase_label"] = labels
+        net["pore.electrolyte"] = labels == 0
+        net["pore.nmc"] = labels == 1
+        net["pore.cbd"] = labels == 2
+        assert not check_percolation(net, phase="electrolyte")
+
+    def test_solid_percolation_check(self):
+        """Solid percolation should include both NMC and CBD pores."""
+        net = create_cathode_network(shape=[3, 1, 1], spacing=1e-5, porosity=0.0, cbd_fraction=0.0)
+        assert check_percolation(net, phase="solid")
+
+        labels = np.array([1, 0, 2])
+        net["pore.phase_label"] = labels
+        net["pore.electrolyte"] = labels == 0
+        net["pore.nmc"] = labels == 1
+        net["pore.cbd"] = labels == 2
+        assert not check_percolation(net, phase="solid")

@@ -51,6 +51,60 @@ Khan et al. (2021), J. Electrochem. Soc. 168(7), 070534.
 
 import numpy as np
 import openpnm as op
+from scipy import sparse
+from scipy.sparse.csgraph import connected_components
+
+
+def check_percolation(net: op.network.Cubic, phase: str = "electrolyte") -> bool:
+    """Return True when a phase has a connected path from separator to collector.
+
+    The x direction is treated as the electrode thickness direction: the
+    minimum-x plane is the separator side, and the maximum-x plane is the
+    current-collector side.
+    """
+    phase_key = phase.lower()
+    if phase_key in {"electrolyte", "e"}:
+        mask = np.asarray(net["pore.electrolyte"], dtype=bool)
+    elif phase_key in {"solid", "s"}:
+        mask = np.asarray(net["pore.nmc"], dtype=bool) | np.asarray(net["pore.cbd"], dtype=bool)
+    elif phase_key == "nmc":
+        mask = np.asarray(net["pore.nmc"], dtype=bool)
+    elif phase_key == "cbd":
+        mask = np.asarray(net["pore.cbd"], dtype=bool)
+    else:
+        raise ValueError("phase must be one of: electrolyte, solid, nmc, cbd")
+
+    if not np.any(mask):
+        return False
+
+    coords = np.asarray(net["pore.coords"], dtype=float)
+    x = coords[:, 0]
+    x_min = float(np.min(x))
+    x_max = float(np.max(x))
+    sep = mask & np.isclose(x, x_min)
+    cc = mask & np.isclose(x, x_max)
+    if not np.any(sep) or not np.any(cc):
+        return False
+
+    phase_pores = np.where(mask)[0]
+    phase_map = np.full(net.Np, -1, dtype=int)
+    phase_map[phase_pores] = np.arange(phase_pores.size)
+
+    conns = np.asarray(net["throat.conns"], dtype=int)
+    keep = mask[conns[:, 0]] & mask[conns[:, 1]]
+    if not np.any(keep):
+        return False
+
+    local_conns = phase_map[conns[keep]]
+    rows = np.r_[local_conns[:, 0], local_conns[:, 1]]
+    cols = np.r_[local_conns[:, 1], local_conns[:, 0]]
+    data = np.ones(rows.size, dtype=bool)
+    graph = sparse.csr_matrix((data, (rows, cols)), shape=(phase_pores.size, phase_pores.size))
+    _n_components, labels = connected_components(graph, directed=False)
+
+    sep_components = set(labels[phase_map[np.where(sep)[0]]])
+    cc_components = set(labels[phase_map[np.where(cc)[0]]])
+    return bool(sep_components & cc_components)
 
 
 def create_cathode_network(

@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.network.generator import create_cathode_network
+from src.network.generator import check_percolation, create_cathode_network
 from src.physics.ocv import nmc532_ocv
 from src.solver.transient import TransientSolver
 
@@ -30,9 +30,9 @@ PDF_PATH = ROOT / "data/khan2021_pnm_lib_cathode.pdf"
 PAPER_DIR = ROOT / "data/paper_figures"
 OUT_DIR = ROOT / "data/validation"
 
-SHAPE = [5, 5, 5]
+SHAPE = [10, 10, 10]
 SPACING = 1e-5
-A_GEOMETRIC = (5 * SPACING) ** 2
+A_GEOMETRIC = (10 * SPACING) ** 2
 POROSITY = 0.368
 CBD_FRACTION = 0.10
 SEED = 42
@@ -86,9 +86,47 @@ def make_solver() -> TransientSolver:
         cbd_fraction=CBD_FRACTION,
         seed=SEED,
     )
+    percolation = {
+        "electrolyte": check_percolation(net, phase="electrolyte"),
+        "solid": check_percolation(net, phase="solid"),
+    }
+    for phase, ok in percolation.items():
+        if not ok:
+            print(
+                f"WARNING: {phase} phase does not percolate "
+                "from separator to collector",
+                flush=True,
+            )
     solver = TransientSolver(net, T=T, k0=K0, geometric_area=A_GEOMETRIC)
     solver.set_concentration(c_e=C_E0, c_s=C_S0)
     return solver
+
+
+def print_connectivity_summary(solver: TransientSolver) -> None:
+    net = solver.net
+    percolates_e = check_percolation(net, phase="electrolyte")
+    percolates_s = check_percolation(net, phase="solid")
+    active_e = int(np.count_nonzero(solver._steady.active_e))
+    active_s = int(np.count_nonzero(solver._steady.active_s))
+    reactive_interfaces = len(solver._steady.reactive_interfaces)
+
+    print("network connectivity summary:", flush=True)
+    print(f"  shape={SHAPE}, spacing={SPACING:.3g} m, geometric_area={A_GEOMETRIC:.6g} m2", flush=True)
+    print(f"  pores={solver.Np}, throats={solver.Nt}", flush=True)
+    print(
+        f"  NMC pores={solver.n_nmc}, electrolyte pores={solver.n_e}, "
+        f"solid pores={solver.n_s}",
+        flush=True,
+    )
+    print(
+        f"  percolation: electrolyte={percolates_e}, solid={percolates_s}",
+        flush=True,
+    )
+    print(
+        f"  active_e={active_e}/{solver.n_e}, active_s={active_s}/{solver.n_s}, "
+        f"reactive_interfaces={reactive_interfaces}",
+        flush=True,
+    )
 
 
 def nmc_mass_loading_g_m2(solver: TransientSolver) -> float:
@@ -159,10 +197,11 @@ def print_diagnostics(
         f"phi_s_range={_fmt_range_mV(phi_s_range)}, "
         f"eta_range={_fmt_range_mV(eta_range)}, "
         f"mass_loading={mass_loading:.3f} g/m2, "
-        f"current_density={i_app:.6g} A/m2"
+        f"current_density={i_app:.6g} A/m2",
+        flush=True,
     )
     if active_e_fraction < 0.5:
-        print("  WARNING: LOW CONNECTIVITY active_e_fraction < 0.5")
+        print("  WARNING: LOW CONNECTIVITY active_e_fraction < 0.5", flush=True)
     return diagnostics
 
 
@@ -208,7 +247,7 @@ def accepted_step(
 def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
     solver = make_solver()
     i_app = solver.current_density_for_c_rate(crate)
-    dt = min(20.0, 10.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
+    dt = min(100.0, 50.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
     mass_loading = nmc_mass_loading_g_m2(solver)
 
     solver._steady.set_concentration(solver.c_e, solver.c_s)
@@ -221,8 +260,8 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
     iterations = [initial["iterations"]]
     reached_cutoff = False
 
-    max_time = 1.10 * 3600.0 / crate
-    max_steps = int(np.ceil(max_time / dt)) + 200
+    max_time = 1.25 * 3600.0 / crate
+    max_steps = int(np.ceil(max_time / dt)) + 500
     for _ in range(max_steps):
         step, dt_used = accepted_step(solver, dt, i_app)
         t_new = times[-1] + dt_used
@@ -251,7 +290,8 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
     if not cutoff_limited:
         print(
             f"  WARNING: {crate:g}C capacity is time-limited; "
-            "run did not reach cutoff voltage."
+            "run did not reach cutoff voltage.",
+            flush=True,
         )
 
     result = {
@@ -281,7 +321,7 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
 def run_to_sol(crate: float, target_sol: float = 0.75) -> dict:
     solver = make_solver()
     i_app = solver.current_density_for_c_rate(crate)
-    dt = min(20.0, 10.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
+    dt = min(100.0, 50.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
 
     solver._steady.set_concentration(solver.c_e, solver.c_s)
     initial = solver._steady.solve(I_app=0.0)
@@ -290,7 +330,8 @@ def run_to_sol(crate: float, target_sol: float = 0.75) -> dict:
     steps = 0
     mean_sol = float(np.mean(solver.c_s[solver.nmc_indices] / CS_MAX))
 
-    while mean_sol < target_sol and previous_voltage > CUTOFF and steps < 600:
+    max_steps = int(np.ceil(1.25 * 3600.0 / crate / dt)) + 500
+    while mean_sol < target_sol and previous_voltage > CUTOFF and steps < max_steps:
         step, dt_used = accepted_step(solver, dt, i_app)
         time_s += dt_used
         steps += 1
@@ -492,10 +533,12 @@ def main() -> None:
     PAPER_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     rendered = render_pdf_assets()
+    summary_solver = make_solver()
+    print_connectivity_summary(summary_solver)
 
     discharges: dict[float, dict] = {}
     for crate in [0.2, 0.5, 1.0, 3.0]:
-        print(f"running {crate:g}C discharge")
+        print(f"running {crate:g}C discharge", flush=True)
         result, _solver = run_discharge(crate)
         discharges[crate] = result
 
@@ -503,7 +546,7 @@ def main() -> None:
 
     spatials: dict[float, dict] = {}
     for crate in [1.0, 3.0]:
-        print(f"running {crate:g}C spatial snapshot")
+        print(f"running {crate:g}C spatial snapshot", flush=True)
         spatial = run_to_sol(crate, target_sol=0.75)
         spatials[crate] = spatial
         plot_spatial_comparison(spatial, crate)
@@ -513,7 +556,7 @@ def main() -> None:
     metrics = build_metrics(rendered, discharges, spatials)
     metrics_path = OUT_DIR / "validation_metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    print(f"saved metrics: {metrics_path}")
+    print(f"saved metrics: {metrics_path}", flush=True)
 
 
 if __name__ == "__main__":
