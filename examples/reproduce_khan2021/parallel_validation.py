@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -43,9 +43,9 @@ class RunConfig:
 
 def run_one(cfg: RunConfig) -> dict:
     """单个 C-rate 放电 — 在子进程中运行。"""
-    from src.network.generator import create_cathode_network
-    from src.physics.separator import SeparatorParams
-    from src.solver.transient import TransientSolver
+    from pnmcathode.network.generator import create_cathode_network
+    from pnmcathode.physics.separator import SeparatorParams
+    from pnmcathode.solver.transient import TransientSolver
 
     net = create_cathode_network(
         shape=cfg.shape, spacing=cfg.spacing, porosity=cfg.porosity,
@@ -127,7 +127,7 @@ def run_one(cfg: RunConfig) -> dict:
     # 隔膜损失
     sep_ohm = sep_conc = 0.0
     if cfg.separator_enabled:
-        from src.physics.separator import separator_boundary, SeparatorParams as SP
+        from pnmcathode.physics.separator import separator_boundary, SeparatorParams as SP
         sep = separator_boundary(i_app, cfg.T, SP(enabled=True))
         sep_ohm = sep.dphi_ohm * 1000  # mV
         sep_conc = sep.dphi_conc * 1000

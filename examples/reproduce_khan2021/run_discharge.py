@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 # 将项目根目录加入 Python 路径
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -26,8 +26,8 @@ os.environ.setdefault("MPLCONFIGDIR", str((ROOT / "data/.matplotlib").resolve())
 
 import numpy as np
 
-from src.network.generator import create_cathode_network
-from src.solver.transient import TransientSolver
+from pnmcathode.network.generator import create_cathode_network
+from pnmcathode.solver.transient import TransientSolver
 
 
 def parse_shape(value: str) -> list[int]:

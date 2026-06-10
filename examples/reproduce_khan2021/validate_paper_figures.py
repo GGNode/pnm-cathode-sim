@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -25,10 +25,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.network.generator import check_percolation, create_cathode_network
-from src.physics.ocv import nmc532_ocv
-from src.physics.separator import SeparatorParams
-from src.solver.transient import TransientSolver
+from pnmcathode.network.generator import check_percolation, create_cathode_network
+from pnmcathode.physics.ocv import nmc532_ocv
+from pnmcathode.physics.separator import SeparatorParams
+from pnmcathode.solver.transient import TransientSolver
 
 
 PDF_PATH = ROOT / "data/khan2021_pnm_lib_cathode.pdf"

@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pnmcathode"
+version = "0.1.0"
+description = "Pore-network cathode simulation toolkit for lithium-ion battery cathodes"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "PNM-LIB-Cathode contributors" }
+]
+keywords = [
+  "battery",
+  "cathode",
+  "pore-network",
+  "simulation",
+  "electrochemistry"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+  "openpnm>=3.0",
+  "porespy>=2.0",
+]
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=6.0"]
+test = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pyyaml>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/pnm-lib/pnm-lib-cathode"
+Repository = "https://github.com/pnm-lib/pnm-lib-cathode"
+
+[tool.setuptools]
+packages = [
+  "pnmcathode",
+  "pnmcathode.materials",
+  "pnmcathode.network",
+  "pnmcathode.physics",
+  "pnmcathode.solver",
+  "pnmcathode.post",
+  "src",
+  "src.network",
+  "src.physics",
+  "src.solver",
+  "src.post",
+]
+
+[tool.setuptools.package-dir]
+pnmcathode = "src/pnmcathode"
+"pnmcathode.materials" = "src/pnmcathode/materials"
+"pnmcathode.network" = "src/pnmcathode/network"
+"pnmcathode.physics" = "src/pnmcathode/physics"
+"pnmcathode.solver" = "src/pnmcathode/solver"
+"pnmcathode.post" = "src/pnmcathode/post"
+src = "src"
+"src.network" = "src/network"
+"src.physics" = "src/physics"
+"src.solver" = "src/solver"
+"src.post" = "src/post"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

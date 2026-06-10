@@ -1,6 +1,5 @@
-"""孔隙网络生成与属性计算模块。
+"""Compatibility wrappers for legacy ``src.network`` imports."""
 
-功能:
-- create_cathode_network(): 创建三相 (电解质/NMC/CBD) 立方孔网络
-- check_percolation(): 检查相的连通性 (从隔膜到集流体)
-"""
+from pnmcathode.network.generator import check_percolation, create_cathode_network
+
+__all__ = ["check_percolation", "create_cathode_network"]
