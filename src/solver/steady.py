@@ -612,8 +612,48 @@ class SteadyStateSolver:
         # Warm-start from previous solution
         if self._phi_e_guess is not None and self._phi_e_guess.shape == (n_e,):
             phi_e = self._phi_e_guess.copy()
+            use_ramp = False  # warm-start available, no ramping needed
+        else:
+            use_ramp = abs(I_app) > 1e-10  # first call: ramp from 0
+
         if self._phi_s_guess is not None and self._phi_s_guess.shape == (n_s,):
             phi_s = self._phi_s_guess.copy()
+
+        # ===== Current ramping (continuation method) =====
+        # On first call (no warm-start), ramp from I=0 to I_app to guide
+        # Newton toward the physically correct solution branch.
+        # Without ramping, Newton may converge to a non-physical solution
+        # where many interfaces have the wrong reaction direction.
+        if use_ramp:
+            n_ramp = 8
+            for ramp_step in range(n_ramp):
+                I_ramp = I_app * (ramp_step + 1) / n_ramp
+                x_ramp = np.concatenate([phi_e, phi_s])
+                for _ in range(max_iter):
+                    pe_r, ps_r = x_ramp[:n_e], x_ramp[n_e:]
+                    J_r, res_r = self._build_coupled_system(pe_r, ps_r, I_ramp)
+                    try:
+                        dx_r = spsolve(J_r, -res_r)
+                    except Exception:
+                        break
+                    if not np.all(np.isfinite(dx_r)):
+                        break
+                    alpha_r = 1.0
+                    for _ in range(10):
+                        x_trial = x_ramp + alpha_r * dx_r
+                        pe_t, ps_t = x_trial[:n_e], x_trial[n_e:]
+                        if not (np.all(np.isfinite(pe_t)) and np.all(np.isfinite(ps_t))):
+                            alpha_r *= 0.5
+                            continue
+                        res_t = self._compute_residual(pe_t, ps_t, I_ramp)
+                        if np.linalg.norm(res_t) < np.linalg.norm(res_r) * (1.0 - 1e-4 * alpha_r):
+                            break
+                        alpha_r *= 0.5
+                    x_ramp = x_ramp + alpha_r * dx_r
+                    if np.max(np.abs(alpha_r * dx_r)) < tol:
+                        break
+                phi_e = x_ramp[:n_e].copy()
+                phi_s = x_ramp[n_e:].copy()
 
         # ===== Newton-Raphson iteration =====
         x = np.concatenate([phi_e, phi_s])
