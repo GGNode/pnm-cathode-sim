@@ -80,6 +80,7 @@ from src.physics.electrolyte import (
 )
 from src.physics.ocv import nmc532_ocv
 from src.physics.reaction import butler_volmer, exchange_current_density, F, R
+from src.physics.separator import SeparatorParams, separator_boundary
 
 
 class SteadyStateSolver:
@@ -92,7 +93,13 @@ class SteadyStateSolver:
     对应 DERIVATION.md §3.3 (电解质电位) 和 §3.5 (固相电位)。
     """
 
-    def __init__(self, net: op.network.Cubic, T: float = 303.0, k0: float = 1e-10):
+    def __init__(
+        self,
+        net: op.network.Cubic,
+        T: float = 303.0,
+        k0: float = 1e-10,
+        separator: SeparatorParams | None = None,
+    ):
         """
         初始化稳态求解器。
 
@@ -104,10 +111,15 @@ class SteadyStateSolver:
             温度 [K]。默认 298.15 K (25°C)。
         k0 : float
             Butler-Volmer 反应速率常数。
+        separator : SeparatorParams or None
+            Separator boundary model parameters.  Defaults to disabled.
         """
         self.net = net
         self.T = T
         self.k0 = k0
+        self.separator = separator or SeparatorParams(enabled=False)
+        self.separator_state = separator_boundary(0.0, T, self.separator)
+        self._phi_e_sep = 0.0
         self.Np = net.Np  # 总节点数
         self.Nt = net.Nt  # 总喉道数
         self.conns = net["throat.conns"]  # 连接矩阵 [Nt, 2]
@@ -466,9 +478,9 @@ class SteadyStateSolver:
         if len(self.active_cc_s) > 0:
             res[n_e + self.active_cc_s] += I_app * self._cc_area / len(self.active_cc_s)
 
-        # Dirichlet BCs: separator electrolyte = 0
+        # Dirichlet BCs: separator electrolyte
         for i in self.sep_e:
-            res[i] = phi_e[i]
+            res[i] = phi_e[i] - self._phi_e_sep
         # Inactive electrolyte nodes: pin to 0
         for i in range(n_e):
             if not self.active_e[i]:
@@ -595,10 +607,10 @@ class SteadyStateSolver:
         # This avoids the slow lil_matrix row-zeroing.
 
         bc_mask = np.zeros(N)
-        # Separator electrolyte: phi_e = 0
+        # Separator electrolyte: phi_e = phi_e_sep
         for i in self.sep_e:
             bc_mask[i] = 1.0
-            res[i] = phi_e[i]
+            res[i] = phi_e[i] - self._phi_e_sep
         # Inactive electrolyte nodes: pin to 0
         for i in range(n_e):
             if not self.active_e[i]:
@@ -675,7 +687,10 @@ class SteadyStateSolver:
 
             voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
             if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
-                V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
+                if self.separator.enabled:
+                    V_cell = float(np.mean(phi_s[voltage_nodes]))
+                else:
+                    V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
             else:
                 V_cell = 0.0
 
@@ -687,6 +702,10 @@ class SteadyStateSolver:
                 "iterations": 0,
                 "converged": True,
             }
+
+        # Separator boundary condition (depends on I_app and c_e)
+        self.separator_state = separator_boundary(I_app, self.T, self.separator)
+        self._phi_e_sep = self.separator_state.phi_e_cathode
 
         # Warm-start from previous solution
         if self._phi_e_guess is not None and self._phi_e_guess.shape == (n_e,):
@@ -807,9 +826,15 @@ class SteadyStateSolver:
                 phi_s_full[g] = phi_s[self.s_map[g]]
 
         # Cell voltage: V_cell = phi_s(collector) - phi_e(separator)
+        # With separator enabled, the Li-metal reference is at 0 V and the
+        # separator ohmic/concentration losses are already encoded in
+        # phi_e[sep_e], so we report V = phi_s(collector).
         voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
         if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
-            V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
+            if self.separator.enabled:
+                V_cell = float(np.mean(phi_s[voltage_nodes]))
+            else:
+                V_cell = float(np.mean(phi_s[voltage_nodes])) - float(np.mean(phi_e[self.sep_e]))
         else:
             V_cell = 0.0
 

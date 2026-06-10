@@ -81,6 +81,7 @@ from scipy.sparse.linalg import spsolve
 from src.physics.electrolyte import electrolyte_diffusion_coefficient
 from src.physics.ocv import nmc532_ocv
 from src.physics.reaction import butler_volmer, exchange_current_density, F, R
+from src.physics.separator import SeparatorParams, separator_boundary
 from src.physics.solid import nmc532_diffusion_coefficient
 from src.solver.steady import SteadyStateSolver
 
@@ -112,6 +113,7 @@ class TransientSolver:
         T: float = 303.0,
         k0: float = 1e-10,
         geometric_area: float | None = None,
+        separator: SeparatorParams | None = None,
     ):
         """
         初始化瞬态求解器。
@@ -135,6 +137,7 @@ class TransientSolver:
         self.T = T
         self.k0 = k0
         self.geometric_area = geometric_area
+        self.separator = separator or SeparatorParams(enabled=False)
         self.Np = net.Np        # 总孔隙数
         self.Nt = net.Nt        # 总喉道数
         self.conns = net["throat.conns"]    # 喉道连接关系, shape (Nt, 2)
@@ -177,7 +180,7 @@ class TransientSolver:
         self._build_diffusion_matrices()
 
         # 稳态求解器 (处理电位方程和 BV 动力学)
-        self._steady = SteadyStateSolver(net, T=T, k0=k0)
+        self._steady = SteadyStateSolver(net, T=T, k0=k0, separator=self.separator)
         if geometric_area is not None:
             if geometric_area <= 0:
                 raise ValueError("geometric_area must be positive when provided")
@@ -635,11 +638,15 @@ class TransientSolver:
         # 隔膜/Li 侧连接电解液储液库: c_e = c_e_reservoir。
         # 参见 DERIVATION.md §4.1，固定浓度边界补充放电消耗的 Li+。
         if self.n_e and len(self._steady.sep_e) > 0:
+            if self.separator.enabled:
+                c_bc = separator_boundary(I_app, self.T, self.separator).c_cathode
+            else:
+                c_bc = self.c_e_reservoir
             M_e = M_e.tolil()
             for i in self._steady.sep_e:
                 M_e[i, :] = 0.0
                 M_e[i, i] = 1.0
-                rhs_e[i] = self.c_e_reservoir
+                rhs_e[i] = c_bc
             M_e = M_e.tocsr()
         # 固相浓度方程
         M_s = sparse.diags(self._vol_s / dt) - self.L_cs
@@ -662,6 +669,9 @@ class TransientSolver:
         self._build_electrolyte_diffusion_matrix()
         self._build_solid_diffusion_matrix()
 
+        # NOTE: Voltage is from start-of-step potentials (before concentration
+        # update).  V-Q alignment is handled by recording capacity at step START
+        # in the caller, matching this voltage to the same time instant.
         return {
             "phi_e": pot["phi_e"],
             "phi_s": pot["phi_s"],

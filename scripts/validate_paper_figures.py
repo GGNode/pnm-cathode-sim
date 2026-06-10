@@ -23,6 +23,7 @@ import numpy as np
 
 from src.network.generator import check_percolation, create_cathode_network
 from src.physics.ocv import nmc532_ocv
+from src.physics.separator import SeparatorParams
 from src.solver.transient import TransientSolver
 
 
@@ -35,16 +36,31 @@ SPACING = 1e-5
 A_GEOMETRIC = (10 * SPACING) ** 2
 POROSITY = 0.368
 CBD_FRACTION = 0.1392  # Paper 1CAL: 13.92% CBD, 49.28% NMC
-THROAT_SCALE = 2.0  # Compensate synthetic vs XCT throat area
+THROAT_SCALE = 1.0  # No global throat area scaling
 SEED = 42
 T = 303.0
 K0 = 1e-10
 C_E0 = 1200.0
 CUTOFF = 3.0
 CS_MAX = 48900.0
-INITIAL_SOL = 0.35
+INITIAL_SOL = 0.50
 C_S0 = INITIAL_SOL * CS_MAX
 NMC_DENSITY_G_M3 = 4.75e6
+# Paper-equivalent current density from Khan 1CAL areal loading
+PAPER_MASS_LOADING_KG_M2 = 297.8e-3  # kg/m² (297.8 g/m²)
+SPECIFIC_CAPACITY_C_KG = 178.0 * 3600.0  # 178 mAh/g → C/kg
+I_1C_PAPER = PAPER_MASS_LOADING_KG_M2 * SPECIFIC_CAPACITY_C_KG / 3600.0  # A/m² ≈ 53.0
+
+# --- C-rate / capacity basis ---
+CURRENT_BASIS = "network"       # "network" or "paper_areal"
+CAPACITY_BASIS = "network_mass" # "network_mass" or "paper_mass"
+
+# --- Separator defaults ---
+SEPARATOR_ENABLED = False
+SEPARATOR_PARAMS = SeparatorParams(enabled=SEPARATOR_ENABLED)
+
+# Paper reference geometry
+PAPER_THICKNESS_UM = 75.0  # 1CAL electrode thickness [um]
 
 
 def _safe_name(crate: float) -> str:
@@ -79,7 +95,7 @@ def render_pdf_assets() -> dict[str, str]:
     return outputs
 
 
-def make_solver() -> TransientSolver:
+def make_solver(separator: SeparatorParams | None = None) -> TransientSolver:
     net = create_cathode_network(
         shape=SHAPE,
         spacing=SPACING,
@@ -99,7 +115,9 @@ def make_solver() -> TransientSolver:
                 "from separator to collector",
                 flush=True,
             )
-    solver = TransientSolver(net, T=T, k0=K0, geometric_area=A_GEOMETRIC)
+    solver = TransientSolver(
+        net, T=T, k0=K0, geometric_area=A_GEOMETRIC, separator=separator,
+    )
     solver.set_concentration(c_e=C_E0, c_s=C_S0)
     return solver
 
@@ -207,11 +225,20 @@ def print_diagnostics(
     return diagnostics
 
 
-def add_gravimetric_capacity(result: dict, solver: TransientSolver) -> dict:
-    mass_loading = nmc_mass_loading_g_m2(solver)
+def add_gravimetric_capacity(
+    result: dict,
+    solver: TransientSolver,
+    mass_loading: float | None = None,
+) -> dict:
+    if mass_loading is None:
+        mass_loading = nmc_mass_loading_g_m2(solver)
     result = {key: np.asarray(value) if isinstance(value, list) else value for key, value in result.items()}
     result["mass_loading_g_m2"] = mass_loading
-    result["capacity_mAh_g"] = result["capacity_Ah_m2"] * 1000.0 / mass_loading
+    # capacity_Ah_m2 [Ah/m²] / mass_loading_kg_m2 [kg/m²] = [Ah/kg] = [mAh/g]
+    if CAPACITY_BASIS == "network_mass":
+        result["capacity_mAh_g"] = result["capacity_Ah_m2"] / (mass_loading / 1000.0)
+    else:
+        result["capacity_mAh_g"] = result["capacity_Ah_m2"] / PAPER_MASS_LOADING_KG_M2
     return result
 
 
@@ -246,9 +273,17 @@ def accepted_step(
     raise RuntimeError(f"could not find a converged validation step at I_app={i_app}")
 
 
-def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
-    solver = make_solver()
-    i_app = solver.current_density_for_c_rate(crate)
+def run_discharge(
+    crate: float,
+    separator: SeparatorParams | None = None,
+) -> tuple[dict, TransientSolver]:
+    solver = make_solver(separator=separator)
+    if CURRENT_BASIS == "network":
+        i_app = solver.current_density_for_c_rate(
+            crate, geometric_area=A_GEOMETRIC,
+        )
+    else:
+        i_app = -crate * I_1C_PAPER  # Paper-equivalent current density
     dt = min(100.0, 50.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
     mass_loading = nmc_mass_loading_g_m2(solver)
 
@@ -264,28 +299,38 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
 
     max_time = 1.25 * 3600.0 / crate
     max_steps = int(np.ceil(max_time / dt)) + 500
+    # Pre-step voltage (V at t_0, before first step)
+    v_prev = voltages[0]
     for _ in range(max_steps):
         step, dt_used = accepted_step(solver, dt, i_app)
         t_new = times[-1] + dt_used
-        q_new = abs(i_app) * t_new
-        v_new = step["voltage"]
+        v_new = step["voltage"]  # voltage at START of step (before concentration update)
+
+        # Capacity at START of step (time-aligned with voltage)
+        q_start = abs(i_app) * times[-1]
 
         # Stop if we've exceeded max_time
         if t_new >= max_time and not reached_cutoff:
+            # Record final point at end-of-time
+            q_end = abs(i_app) * t_new
+            times.append(t_new)
+            capacities.append(q_end)
+            voltages.append(v_new)
             break
 
         if voltages[-1] > CUTOFF >= v_new:
             frac = (voltages[-1] - CUTOFF) / max(voltages[-1] - v_new, 1e-30)
             times.append(times[-1] + frac * dt_used)
-            capacities.append(capacities[-1] + frac * (q_new - capacities[-1]))
+            capacities.append(q_start + frac * abs(i_app) * dt_used)
             voltages.append(CUTOFF)
             dts.append(frac * dt_used)
             iterations.append(step["iterations"])
             reached_cutoff = True
             break
 
+        # Record: voltage at t_n, capacity at t_n (start-of-step aligned)
         times.append(t_new)
-        capacities.append(q_new)
+        capacities.append(abs(i_app) * t_new)
         voltages.append(v_new)
         dts.append(dt_used)
         iterations.append(step["iterations"])
@@ -318,8 +363,12 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
         "final_min_sol": float(np.min(solver.c_s[solver.nmc_indices] / CS_MAX)),
         "final_max_sol": float(np.max(solver.c_s[solver.nmc_indices] / CS_MAX)),
         "diagnostics": diagnostics,
+        "current_basis": CURRENT_BASIS,
+        "capacity_basis": CAPACITY_BASIS,
+        "I_1C_A_m2": solver.discharge_capacity_coulombs() / 3600.0 / A_GEOMETRIC,
+        "separator_enabled": solver.separator.enabled,
     }
-    result = add_gravimetric_capacity(result, solver)
+    result = add_gravimetric_capacity(result, solver, mass_loading=mass_loading)
     out = OUT_DIR / f"discharge_{_safe_name(crate)}c.npz"
     np.savez(out, **result)
     return result, solver
@@ -327,7 +376,12 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
 
 def run_to_sol(crate: float, target_sol: float = 0.75) -> dict:
     solver = make_solver()
-    i_app = solver.current_density_for_c_rate(crate)
+    if CURRENT_BASIS == "network":
+        i_app = solver.current_density_for_c_rate(
+            crate, geometric_area=A_GEOMETRIC,
+        )
+    else:
+        i_app = -crate * I_1C_PAPER  # Paper-equivalent current density
     dt = min(100.0, 50.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
 
     solver._steady.set_concentration(solver.c_e, solver.c_s)
@@ -485,6 +539,12 @@ def end_to_end_delta(values: np.ndarray, x: np.ndarray, mask: np.ndarray) -> flo
 
 
 def build_metrics(rendered: dict[str, str], discharges: dict[float, dict], spatials: dict[float, dict]) -> dict:
+    # Geometry disclosure
+    thickness_modeled_um = (SHAPE[0] - 1) * SPACING * 1e6
+    summary_solver = make_solver()
+    model_mass_loading = nmc_mass_loading_g_m2(summary_solver)
+    model_i_1c = summary_solver.discharge_capacity_coulombs() / 3600.0 / A_GEOMETRIC
+
     metrics: dict = {
         "rendered": rendered,
         "simulation_settings": {
@@ -497,6 +557,30 @@ def build_metrics(rendered: dict[str, str], discharges: dict[float, dict], spati
             "initial_sol": INITIAL_SOL,
             "nmc_density_g_m3_for_capacity": NMC_DENSITY_G_M3,
             "geometric_area_m2": A_GEOMETRIC,
+            "current_basis": CURRENT_BASIS,
+            "capacity_basis": CAPACITY_BASIS,
+            "separator_enabled": SEPARATOR_ENABLED,
+        },
+        "geometry_disclosure": {
+            "model_thickness_um": float(thickness_modeled_um),
+            "paper_thickness_um": float(PAPER_THICKNESS_UM),
+            "thickness_ratio_paper_over_model": float(PAPER_THICKNESS_UM / thickness_modeled_um),
+            "model_mass_loading_g_m2": float(model_mass_loading),
+            "paper_mass_loading_g_m2": float(PAPER_MASS_LOADING_KG_M2 * 1000.0),
+            "mass_loading_ratio_paper_over_model": float(
+                PAPER_MASS_LOADING_KG_M2 * 1000.0 / model_mass_loading
+            ),
+            "model_I_1C_A_m2": float(model_i_1c),
+            "paper_I_1C_A_m2": float(I_1C_PAPER),
+            "I_1C_ratio_paper_over_model": float(I_1C_PAPER / model_i_1c),
+            "model_nodes": int(summary_solver.Np),
+            "model_throats": int(summary_solver.Nt),
+            "active_interfaces": int(len(summary_solver._steady.reactive_interfaces)),
+            "note": (
+                "10x10x10 synthetic network is not a quantitative geometry match "
+                "to Khan 1CAL XCT network.  Comparison is qualitative unless "
+                "geometry and mass loading are matched."
+            ),
         },
         "figure4": {},
         "spatial": {},
@@ -540,13 +624,30 @@ def main() -> None:
     PAPER_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     rendered = render_pdf_assets()
-    summary_solver = make_solver()
+    summary_solver = make_solver(separator=SEPARATOR_PARAMS)
     print_connectivity_summary(summary_solver)
+
+    # --- Geometry disclosure ---
+    thickness_modeled_um = (SHAPE[0] - 1) * SPACING * 1e6
+    model_mass = nmc_mass_loading_g_m2(summary_solver)
+    paper_mass = PAPER_MASS_LOADING_KG_M2 * 1000.0
+    model_i1c = summary_solver.discharge_capacity_coulombs() / 3600.0 / A_GEOMETRIC
+    print("\ngeometry disclosure:", flush=True)
+    print(f"  model thickness: {thickness_modeled_um:.1f} um "
+          f"(paper 1CAL: {PAPER_THICKNESS_UM:.1f} um, "
+          f"ratio={PAPER_THICKNESS_UM / thickness_modeled_um:.2f})", flush=True)
+    print(f"  model mass loading: {model_mass:.2f} g/m2 "
+          f"(paper: {paper_mass:.2f} g/m2, "
+          f"ratio={paper_mass / model_mass:.2f})", flush=True)
+    print(f"  model I_1C: {model_i1c:.4f} A/m2 "
+          f"(paper: {I_1C_PAPER:.4f} A/m2)", flush=True)
+    print(f"  current_basis={CURRENT_BASIS}, capacity_basis={CAPACITY_BASIS}", flush=True)
+    print(f"  separator_enabled={SEPARATOR_ENABLED}", flush=True)
 
     discharges: dict[float, dict] = {}
     for crate in [0.2, 0.5, 1.0, 3.0]:
-        print(f"running {crate:g}C discharge", flush=True)
-        result, _solver = run_discharge(crate)
+        print(f"\nrunning {crate:g}C discharge (basis={CURRENT_BASIS})", flush=True)
+        result, _solver = run_discharge(crate, separator=SEPARATOR_PARAMS)
         discharges[crate] = result
 
     plot_vq_comparison(discharges)
@@ -564,6 +665,74 @@ def main() -> None:
     metrics_path = OUT_DIR / "validation_metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(f"saved metrics: {metrics_path}", flush=True)
+
+    # --- 4-scenario summary ---
+    print_4scenario_summary()
+
+
+def print_4scenario_summary() -> None:
+    """Run 4 scenarios and print a comparison table."""
+    scenarios = [
+        ("network, sep OFF", "network", "network_mass", SeparatorParams(enabled=False)),
+        ("network, sep ON",  "network", "network_mass", SeparatorParams(enabled=True)),
+        ("paper,   sep OFF", "paper_areal", "paper_mass", SeparatorParams(enabled=False)),
+        ("paper,   sep ON",  "paper_areal", "paper_mass", SeparatorParams(enabled=True)),
+    ]
+    print("\n" + "=" * 80, flush=True)
+    print("4-SCENARIO SUMMARY", flush=True)
+    print("=" * 80, flush=True)
+
+    for label, cur_basis, cap_basis, sep_params in scenarios:
+        # Temporarily override globals
+        global CURRENT_BASIS, CAPACITY_BASIS
+        CURRENT_BASIS = cur_basis
+        CAPACITY_BASIS = cap_basis
+
+        print(f"\n--- {label} ---", flush=True)
+        for crate in [0.2, 3.0]:
+            result, solver = run_discharge(crate, separator=sep_params)
+            v0 = result["voltage"][0]
+            vf = result["voltage"][-1]
+            cap = result["capacity_mAh_g"][-1]
+            cutoff = result["reached_cutoff"]
+            mass = result["mass_loading_g_m2"]
+            i1c = result["I_1C_A_m2"]
+            i_app = result["I_app"]
+
+            # Separator drops
+            if sep_params.enabled:
+                sep_state = solver._steady.separator_state
+                sep_info = (
+                    f"  sep ohmic={sep_state.dphi_ohm * 1e3:.2f} mV, "
+                    f"conc={sep_state.dphi_conc * 1e3:.2f} mV, "
+                    f"Li BV={sep_state.eta_li * 1e3:.2f} mV"
+                )
+            else:
+                sep_info = "  (no separator model)"
+
+            # phi_e span from diagnostics
+            diag = result.get("diagnostics", {})
+            phi_e_range = diag.get("phi_e_range_V", (None, None))
+            if phi_e_range[0] is not None and phi_e_range[1] is not None:
+                phi_e_span = phi_e_range[1] - phi_e_range[0]
+            else:
+                phi_e_span = 0.0
+
+            print(
+                f"  {crate:g}C: V0={v0:.4f}V, Vf={vf:.4f}V, "
+                f"cap={cap:.1f} mAh/g, cutoff={cutoff}, "
+                f"I_app={i_app:.4f} A/m2, I_1C={i1c:.4f} A/m2, "
+                f"mass={mass:.2f} g/m2",
+                flush=True,
+            )
+            print(
+                f"  phi_e span={phi_e_span * 1e3:.2f} mV{sep_info}",
+                flush=True,
+            )
+
+    # Restore defaults
+    CURRENT_BASIS = "network"
+    CAPACITY_BASIS = "network_mass"
 
 
 if __name__ == "__main__":
