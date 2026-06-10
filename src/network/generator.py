@@ -113,6 +113,7 @@ def create_cathode_network(
     porosity: float = 0.35,
     cbd_fraction: float = 0.10,
     seed: int | None = None,
+    throat_scale: float = 1.0,
 ) -> op.network.Cubic:
     """
     创建具有三相阴极标记的立方孔网络。
@@ -189,8 +190,9 @@ def create_cathode_network(
     net["pore.cbd"] = labels == 2          # CBD 布尔掩码
 
     # ===== 几何属性 =====
-    # 孔径: 在 spacing 的 [0.5, 1.5] 倍范围内均匀分布
-    pore_diameter = rng.uniform(0.5, 1.5, n_pores) * spacing
+    # 孔径: 在 spacing 的 [0.8, 1.2] 倍范围内均匀分布
+    # 使用窄分布避免 SoL 双峰 (小孔太快饱和)
+    pore_diameter = rng.uniform(0.8, 1.2, n_pores) * spacing
     net["pore.diameter"] = pore_diameter
     # 孔体积: 按球体计算, V = π/6 * d³
     net["pore.volume"] = (np.pi / 6.0) * pore_diameter**3
@@ -198,7 +200,8 @@ def create_cathode_network(
     # 喉道属性
     n_throats = net.Nt
     # 喉道直径: 在 spacing*0.5 的 [0.2, 0.8] 倍范围内
-    throat_diameter = rng.uniform(0.2, 0.8, n_throats) * spacing * 0.5
+    # throat_scale > 1 增大接触面积, 补偿合成网络 vs XCT 微结构的几何差异
+    throat_diameter = rng.uniform(0.2, 0.8, n_throats) * spacing * 0.5 * throat_scale
     net["throat.diameter"] = throat_diameter
     # 喉道截面积: A = π/4 * d²
     net["throat.area"] = (np.pi / 4.0) * throat_diameter**2

@@ -35,6 +35,7 @@ SPACING = 1e-5
 A_GEOMETRIC = (10 * SPACING) ** 2
 POROSITY = 0.368
 CBD_FRACTION = 0.1392  # Paper 1CAL: 13.92% CBD, 49.28% NMC
+THROAT_SCALE = 2.0  # Compensate synthetic vs XCT throat area
 SEED = 42
 T = 303.0
 K0 = 1e-10
@@ -85,6 +86,7 @@ def make_solver() -> TransientSolver:
         porosity=POROSITY,
         cbd_fraction=CBD_FRACTION,
         seed=SEED,
+        throat_scale=THROAT_SCALE,
     )
     percolation = {
         "electrolyte": check_percolation(net, phase="electrolyte"),
@@ -267,6 +269,11 @@ def run_discharge(crate: float) -> tuple[dict, TransientSolver]:
         t_new = times[-1] + dt_used
         q_new = abs(i_app) * t_new
         v_new = step["voltage"]
+
+        # Stop if we've exceeded max_time
+        if t_new >= max_time and not reached_cutoff:
+            break
+
         if voltages[-1] > CUTOFF >= v_new:
             frac = (voltages[-1] - CUTOFF) / max(voltages[-1] - v_new, 1e-30)
             times.append(times[-1] + frac * dt_used)

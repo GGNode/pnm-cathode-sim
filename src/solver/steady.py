@@ -377,14 +377,19 @@ class SteadyStateSolver:
         if result is None:
             result = self.solve(I_app=0.0)
 
-        def finite_min_max(values: np.ndarray) -> tuple[float | None, float | None]:
-            finite = np.asarray(values)[np.isfinite(values)]
+        def active_field_range(values: np.ndarray, indices: np.ndarray, active_mask: np.ndarray) -> tuple[float | None, float | None]:
+            """Get min/max of field values for active nodes only."""
+            active_global = indices[active_mask]
+            if active_global.size == 0:
+                return None, None
+            vals = np.asarray(values)[active_global]
+            finite = vals[np.isfinite(vals)]
             if finite.size == 0:
                 return None, None
             return float(np.min(finite)), float(np.max(finite))
 
-        phi_e_min, phi_e_max = finite_min_max(result["phi_e"])
-        phi_s_min, phi_s_max = finite_min_max(result["phi_s"])
+        phi_e_min, phi_e_max = active_field_range(result["phi_e"], self.e_indices, self.active_e)
+        phi_s_min, phi_s_max = active_field_range(result["phi_s"], self.s_indices, self.active_s)
         i_rxn = np.asarray(result.get("I_rxn", []), dtype=float)
         active_i_rxn = i_rxn[np.isfinite(i_rxn) & (np.abs(i_rxn) > 0.0)]
 
