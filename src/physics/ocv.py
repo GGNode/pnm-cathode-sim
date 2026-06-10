@@ -78,6 +78,6 @@ def ocv_derivative(soc: float | np.ndarray) -> float | np.ndarray:
     soc = np.asarray(soc, dtype=float)
     deriv_coeffs = np.polyder(_KHAN_COEFFS)
     dU = np.polyval(deriv_coeffs, soc)
-    # exp correction derivative
+    # 指数修正项的导数
     dU = dU - 0.0003 * 7.657 * 115 * (soc**114) * np.exp(7.657 * (soc**115))
     return float(dU) if dU.ndim == 0 else dU

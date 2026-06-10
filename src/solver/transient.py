@@ -129,9 +129,8 @@ class TransientSolver:
             Butler-Volmer 反应速率常数 [m^(2.5) / (mol^0.5 · s)]。
             默认 5e-10。
         geometric_area : float or None
-            Projected geometric electrode area [m²]. When provided, it is used
-            for C-rate current-density conversion and current boundary scaling
-            instead of the network-derived collector throat area.
+            投影几何电极面积 [m²]。提供时, 用于 C-rate 电流密度转换
+            和电流边界缩放, 而非使用网络推导的集流体喉道面积。
         """
         self.net = net
         self.T = T
@@ -669,9 +668,9 @@ class TransientSolver:
         self._build_electrolyte_diffusion_matrix()
         self._build_solid_diffusion_matrix()
 
-        # NOTE: Voltage is from start-of-step potentials (before concentration
-        # update).  V-Q alignment is handled by recording capacity at step START
-        # in the caller, matching this voltage to the same time instant.
+        # 注意: 电压来自时间步开始时的电位 (浓度更新之前)。
+        # V-Q 对齐通过在调用方记录时间步开始时的容量来实现,
+        # 使此电压与同一时间点匹配。
         return {
             "phi_e": pot["phi_e"],
             "phi_s": pot["phi_s"],

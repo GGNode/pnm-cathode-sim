@@ -1,65 +1,65 @@
-# Final Audit - Khan 2021 PNM Cathode Reproduction
+# 最终审计报告 — Khan 2021 PNM 阴极复现
 
-## Verification
+## 验证
 
-- Requested command `python -m pytest tests/ -v` was run and failed before collection because the default interpreter lacks `numpy`.
-- Equivalent project-env run passed: `MPLCONFIGDIR="$PWD/data/.matplotlib" .venv/bin/python -m pytest tests/ -v`
-  - Result: `88 passed, 1 skipped`.
+- 请求的命令 `python -m pytest tests/ -v` 在收集阶段因默认解释器缺少 `numpy` 而失败。
+- 使用项目虚拟环境的等效运行通过: `MPLCONFIGDIR="$PWD/data/.matplotlib" .venv/bin/python -m pytest tests/ -v`
+  - 结果: `88 passed, 1 skipped`。
 
-## A. Remaining Code Bugs That Would Produce Wrong Physics
+## A. 可能导致错误物理结果的剩余代码缺陷
 
-- No core steady/transient solver bug found that would explain the reported sep-off discharge results.
-- Butler-Volmer sign convention is internally consistent:
+- 未发现会导致报告的隔膜关闭放电结果出错的核心稳态/瞬态求解器缺陷。
+- Butler-Volmer 符号约定内部一致:
   - `eta = phi_s - phi_e - U_eq`
-  - `I_rxn < 0` for discharge/lithiation
-  - electrolyte source decreases and solid source increases during discharge.
-- Coupled Newton residual/Jacobian signs are consistent with anodic-current convention.
-- Concentration-dependent `D_e(c_e)`, `kappa(c_e)`, and `D_s(c_s)` are wired into the relevant matrices.
-- Real issue found in `scripts/parallel_validation.py`, not the core solver:
-  - Separator-on cases mutate `solver._steady.separator` after construction instead of passing `separator=SeparatorParams(enabled=True)` into `TransientSolver`.
-  - This enables separator voltage BC in the steady solve but leaves `TransientSolver.separator.enabled == False`, so the transient separator concentration BC is not applied.
-  - Impact is small for current results because separator concentration/ohmic losses are only a few mV, but sep-on validation numbers are not fully self-consistent.
-- Minor reporting issue in `scripts/parallel_validation.py`:
-  - Returned `I_1C` is recomputed after discharge from remaining capacity, so it can report final remaining-current basis, not the initial 1C basis used to run the case.
+  - 放电/嵌锂时 `I_rxn < 0`
+  - 放电过程中电解质源项减小, 固相源项增大。
+- 耦合 Newton 残差/Jacobian 符号与阳极电流约定一致。
+- 浓度依赖的 `D_e(c_e)`、`kappa(c_e)` 和 `D_s(c_s)` 已接入相关矩阵。
+- 在 `scripts/parallel_validation.py` 中发现了真正的问题 (非核心求解器):
+  - 隔膜开启场景在构建后修改 `solver._steady.separator`, 而非将 `separator=SeparatorParams(enabled=True)` 传入 `TransientSolver`。
+  - 这使得稳态求解中启用了隔膜电压边界条件, 但 `TransientSolver.separator.enabled` 仍为 `False`, 因此瞬态隔膜浓度边界条件未被施加。
+  - 对当前结果的影响较小, 因为隔膜浓度/欧姆损失仅几毫伏, 但隔膜开启验证数据并非完全自洽。
+- `scripts/parallel_validation.py` 中的小问题:
+  - 返回的 `I_1C` 在放电后从剩余容量重新计算, 因此可能报告的是最终剩余电流基准, 而非运行时使用的初始 1C 基准。
 
-## B. Separator Model Integration
+## B. 隔膜模型集成
 
-- Core integration is correct when separator parameters are passed through the constructor.
-- Steady solver:
-  - Computes separator state from `I_app`.
-  - Applies cathode-side electrolyte Dirichlet potential `phi_e_sep < 0` during discharge.
-  - Reports cell voltage as `phi_s(collector)` when separator is enabled, because Li/Li+ reference is outside the separator at 0 V.
-- Transient solver:
-  - Shares the separator object with `SteadyStateSolver` when constructed normally.
-  - Applies separator cathode-side concentration as the electrolyte boundary concentration.
-- Tests cover zero-current identity, separator-on voltage drop, monotonic separator concentration depletion, and disabled/default backward compatibility.
-- Caveat: `parallel_validation.py` should construct `TransientSolver(..., separator=SeparatorParams(enabled=True))` for sep-on runs.
+- 当隔膜参数通过构造函数传入时, 核心集成是正确的。
+- 稳态求解器:
+  - 根据 `I_app` 计算隔膜状态。
+  - 放电时施加阴极侧电解质 Dirichlet 电位 `phi_e_sep < 0`。
+  - 当隔膜启用时, 电池电压报告为 `phi_s(collector)`, 因为 Li/Li+ 参考电极位于隔膜外部, 电位为 0 V。
+- 瞬态求解器:
+  - 正常构建时与 `SteadyStateSolver` 共享隔膜对象。
+  - 将隔膜阴极侧浓度作为电解质边界浓度施加。
+- 测试覆盖: 零电流恒等式、隔膜开启电压降、隔膜浓度单调耗尽、禁用/默认向后兼容性。
+- 注意: `parallel_validation.py` 应在隔膜开启运行时构建 `TransientSolver(..., separator=SeparatorParams(enabled=True))`。
 
-## C. Physical Reasonableness of 3C = 30.6 mAh/g
+## C. 3C = 30.6 mAh/g 的物理合理性
 
-- Yes, it is physically reasonable for the current synthetic network geometry.
-- It is not a quantitative Khan 1CAL reproduction.
-- The early 3C cutoff is consistent with:
-  - synthetic network geometry rather than XCT-resolved 1CAL topology,
-  - lower/changed mass loading and active interfacial connectivity,
-  - large local polarization at high current,
-  - many active sites becoming transport-limited before full cathode utilization.
-- Separator losses are too small to rescue the gap:
-  - saved parallel results show only about `5.3 mV` ohmic and `2.0 mV` concentration drop at 3C.
-  - sep-on 3C capacity shifts only from about `30.6` to `29.7 mAh/g`.
-- Low-C time-limited capacities should not be interpreted as true cutoff capacities; they are run-duration artifacts when voltage never reaches 3.0 V.
+- 对于当前合成网络几何结构, 该值在物理上是合理的。
+- 它不是 Khan 1CAL 的定量复现。
+- 3C 提前截止与以下因素一致:
+  - 合成网络几何结构而非 XCT 重建的 1CAL 拓扑,
+  - 较低/改变的质量负载和活性界面连通性,
+  - 高电流下的大局部极化,
+  - 许多活性位点在阴极完全利用之前就达到了传输限制。
+- 隔膜损失太小, 无法弥补差距:
+  - 保存的并行结果表明 3C 下仅有约 `5.3 mV` 欧姆损失和 `2.0 mV` 浓度降。
+  - 隔膜开启的 3C 容量仅从约 `30.6` 变为 `29.7 mAh/g`。
+- 低 C 率下的时间受限容量不应被解释为真实的截止容量; 它们是电压未达到 3.0 V 时的运行时长伪影。
 
-## D. Must-Do Changes / Readiness
+## D. 必须修改的内容 / 就绪状态
 
-- No must-do core solver change remains for a publishable/demonstrable method-development scaffold.
-- Before presenting separator-on validation as final, fix `scripts/parallel_validation.py` separator construction and `I_1C` reporting.
-- Before claiming quantitative reproduction of Khan Figure 4, geometry/mass loading must be matched to the paper XCT network; current results should be framed as qualitative method validation.
+- 对于可发表/可展示的方法开发框架, 没有必须修改的核心求解器缺陷。
+- 在将隔膜开启验证作为最终结果之前, 需修复 `scripts/parallel_validation.py` 中的隔膜构建和 `I_1C` 报告。
+- 在声称定量复现 Khan Figure 4 之前, 几何/质量负载必须匹配论文 XCT 网络; 当前结果应定性地描述为方法验证。
 
-## E. Single Most Impactful Improvement
+## E. 单一最具影响力的改进
 
-- Replace or calibrate the synthetic cubic network with a geometry-matched network:
-  - match Khan 1CAL mass loading,
-  - match electrode thickness/projected area,
-  - match active interfacial area and phase connectivity,
-  - preferably use the XCT-derived topology or a calibrated surrogate.
-- This would dominate over further separator tuning, because the separator contributes only mV-scale changes while geometry controls the large capacity and high-rate polarization mismatch.
+- 替换或校准合成立方网络, 使其与几何匹配:
+  - 匹配 Khan 1CAL 质量负载,
+  - 匹配电极厚度/投影面积,
+  - 匹配活性界面面积和相连通性,
+  - 最好使用 XCT 推导的拓扑或经校准的代理模型。
+- 这将主导于进一步的隔膜调优之上, 因为隔膜仅贡献毫伏级变化, 而几何结构控制了大容量和高倍率极化的不匹配。

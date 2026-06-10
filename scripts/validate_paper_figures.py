@@ -1,4 +1,8 @@
-"""Render paper figures and compare validation simulations against them."""
+"""渲染论文图表并与验证仿真结果进行对比。
+
+从论文 PDF 中提取 Figure 4/6/7, 在 10x10x10 合成网络上运行
+0.2C/0.5C/1C/3C 放电仿真, 生成对比图并保存验证指标。
+"""
 
 from __future__ import annotations
 
@@ -35,8 +39,8 @@ SHAPE = [10, 10, 10]
 SPACING = 1e-5
 A_GEOMETRIC = (10 * SPACING) ** 2
 POROSITY = 0.368
-CBD_FRACTION = 0.1392  # Paper 1CAL: 13.92% CBD, 49.28% NMC
-THROAT_SCALE = 1.0  # No global throat area scaling
+CBD_FRACTION = 0.1392  # 论文 1CAL: 13.92% CBD, 49.28% NMC
+THROAT_SCALE = 1.0  # 无全局喉道面积缩放
 SEED = 42
 T = 303.0
 K0 = 1e-10
@@ -46,21 +50,21 @@ CS_MAX = 48900.0
 INITIAL_SOL = 0.50
 C_S0 = INITIAL_SOL * CS_MAX
 NMC_DENSITY_G_M3 = 4.75e6
-# Paper-equivalent current density from Khan 1CAL areal loading
+# 论文等效电流密度 (基于 Khan 1CAL 面积负载)
 PAPER_MASS_LOADING_KG_M2 = 297.8e-3  # kg/m² (297.8 g/m²)
 SPECIFIC_CAPACITY_C_KG = 178.0 * 3600.0  # 178 mAh/g → C/kg
 I_1C_PAPER = PAPER_MASS_LOADING_KG_M2 * SPECIFIC_CAPACITY_C_KG / 3600.0  # A/m² ≈ 53.0
 
-# --- C-rate / capacity basis ---
-CURRENT_BASIS = "network"       # "network" or "paper_areal"
-CAPACITY_BASIS = "network_mass" # "network_mass" or "paper_mass"
+# --- C-rate / 容量基准 ---
+CURRENT_BASIS = "network"       # "network" 或 "paper_areal"
+CAPACITY_BASIS = "network_mass" # "network_mass" 或 "paper_mass"
 
-# --- Separator defaults ---
+# --- 隔膜默认参数 ---
 SEPARATOR_ENABLED = False
 SEPARATOR_PARAMS = SeparatorParams(enabled=SEPARATOR_ENABLED)
 
-# Paper reference geometry
-PAPER_THICKNESS_UM = 75.0  # 1CAL electrode thickness [um]
+# 论文参考几何参数
+PAPER_THICKNESS_UM = 75.0  # 1CAL 电极厚度 [um]
 
 
 def _safe_name(crate: float) -> str:
@@ -79,8 +83,8 @@ def render_pdf_assets() -> dict[str, str]:
         page.get_pixmap(matrix=matrix, alpha=False).save(out)
         outputs[f"page_{page_no:02d}"] = str(out.relative_to(ROOT))
 
-    # The PDF embeds each target figure as one page image. Page 9 is Figure 5;
-    # Figure 6 and Figure 7 are on pages 10 and 11 in this PDF.
+    # PDF 将每个目标图表嵌入为页面图像。Page 9 是 Figure 5;
+    # Figure 6 和 Figure 7 在此 PDF 的第 10 和 11 页。
     figure_pages = {"figure4": 8, "figure6": 10, "figure7": 11}
     for figure, page_no in figure_pages.items():
         page = doc[page_no - 1]
@@ -249,7 +253,7 @@ def accepted_step(
     dt_min: float = 1e-2,
     max_retries: int = 16,
 ) -> tuple[dict, float]:
-    """Take one step, retrying with smaller dt only for failed potential solves."""
+    """执行一个时间步, 仅在电位求解失败时用更小的 dt 重试。"""
     trial_dt = dt
     for _ in range(max_retries):
         snapshot = solver._snapshot_state()
@@ -283,7 +287,7 @@ def run_discharge(
             crate, geometric_area=A_GEOMETRIC,
         )
     else:
-        i_app = -crate * I_1C_PAPER  # Paper-equivalent current density
+        i_app = -crate * I_1C_PAPER  # 论文等效电流密度
     dt = min(100.0, 50.0 / crate, solver.characteristic_dt(I_app=i_app, C_rate=crate))
     mass_loading = nmc_mass_loading_g_m2(solver)
 
@@ -299,19 +303,19 @@ def run_discharge(
 
     max_time = 1.25 * 3600.0 / crate
     max_steps = int(np.ceil(max_time / dt)) + 500
-    # Pre-step voltage (V at t_0, before first step)
+    # 步进前电压 (t_0 时刻, 第一步之前)
     v_prev = voltages[0]
     for _ in range(max_steps):
         step, dt_used = accepted_step(solver, dt, i_app)
         t_new = times[-1] + dt_used
-        v_new = step["voltage"]  # voltage at START of step (before concentration update)
+        v_new = step["voltage"]  # 时间步开始时的电压 (浓度更新之前)
 
-        # Capacity at START of step (time-aligned with voltage)
+        # 时间步开始时的容量 (与电压时间对齐)
         q_start = abs(i_app) * times[-1]
 
-        # Stop if we've exceeded max_time
+        # 超过 max_time 时停止
         if t_new >= max_time and not reached_cutoff:
-            # Record final point at end-of-time
+            # 记录时间终点的最终数据点
             q_end = abs(i_app) * t_new
             times.append(t_new)
             capacities.append(q_end)
@@ -328,7 +332,7 @@ def run_discharge(
             reached_cutoff = True
             break
 
-        # Record: voltage at t_n, capacity at t_n (start-of-step aligned)
+        # 记录: t_n 时刻的电压, t_n 时刻的容量 (步开始对齐)
         times.append(t_new)
         capacities.append(abs(i_app) * t_new)
         voltages.append(v_new)
@@ -341,8 +345,8 @@ def run_discharge(
     cutoff_limited = reached_cutoff
     if not cutoff_limited:
         print(
-            f"  WARNING: {crate:g}C capacity is time-limited; "
-            "run did not reach cutoff voltage.",
+            f"  警告: {crate:g}C 容量受时间限制; "
+            "运行未达到截止电压。",
             flush=True,
         )
 
@@ -539,7 +543,7 @@ def end_to_end_delta(values: np.ndarray, x: np.ndarray, mask: np.ndarray) -> flo
 
 
 def build_metrics(rendered: dict[str, str], discharges: dict[float, dict], spatials: dict[float, dict]) -> dict:
-    # Geometry disclosure
+    # 几何参数披露
     thickness_modeled_um = (SHAPE[0] - 1) * SPACING * 1e6
     summary_solver = make_solver()
     model_mass_loading = nmc_mass_loading_g_m2(summary_solver)
@@ -577,9 +581,8 @@ def build_metrics(rendered: dict[str, str], discharges: dict[float, dict], spati
             "model_throats": int(summary_solver.Nt),
             "active_interfaces": int(len(summary_solver._steady.reactive_interfaces)),
             "note": (
-                "10x10x10 synthetic network is not a quantitative geometry match "
-                "to Khan 1CAL XCT network.  Comparison is qualitative unless "
-                "geometry and mass loading are matched."
+                "10x10x10 合成网络不是 Khan 1CAL XCT 网络的定量几何匹配。"
+                "除非几何和质量负载匹配, 否则对比仅为定性。"
             ),
         },
         "figure4": {},
@@ -627,7 +630,7 @@ def main() -> None:
     summary_solver = make_solver(separator=SEPARATOR_PARAMS)
     print_connectivity_summary(summary_solver)
 
-    # --- Geometry disclosure ---
+    # --- 几何参数披露 ---
     thickness_modeled_um = (SHAPE[0] - 1) * SPACING * 1e6
     model_mass = nmc_mass_loading_g_m2(summary_solver)
     paper_mass = PAPER_MASS_LOADING_KG_M2 * 1000.0
@@ -666,12 +669,12 @@ def main() -> None:
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(f"saved metrics: {metrics_path}", flush=True)
 
-    # --- 4-scenario summary ---
+    # --- 4 场景汇总 ---
     print_4scenario_summary()
 
 
 def print_4scenario_summary() -> None:
-    """Run 4 scenarios and print a comparison table."""
+    """运行 4 种场景并打印对比表。"""
     scenarios = [
         ("network, sep OFF", "network", "network_mass", SeparatorParams(enabled=False)),
         ("network, sep ON",  "network", "network_mass", SeparatorParams(enabled=True)),
@@ -683,7 +686,7 @@ def print_4scenario_summary() -> None:
     print("=" * 80, flush=True)
 
     for label, cur_basis, cap_basis, sep_params in scenarios:
-        # Temporarily override globals
+        # 临时覆盖全局变量
         global CURRENT_BASIS, CAPACITY_BASIS
         CURRENT_BASIS = cur_basis
         CAPACITY_BASIS = cap_basis
@@ -699,7 +702,7 @@ def print_4scenario_summary() -> None:
             i1c = result["I_1C_A_m2"]
             i_app = result["I_app"]
 
-            # Separator drops
+            # 隔膜损失
             if sep_params.enabled:
                 sep_state = solver._steady.separator_state
                 sep_info = (
@@ -708,9 +711,9 @@ def print_4scenario_summary() -> None:
                     f"Li BV={sep_state.eta_li * 1e3:.2f} mV"
                 )
             else:
-                sep_info = "  (no separator model)"
+                sep_info = "  (无隔膜模型)"
 
-            # phi_e span from diagnostics
+            # 从诊断信息获取 phi_e 跨度
             diag = result.get("diagnostics", {})
             phi_e_range = diag.get("phi_e_range_V", (None, None))
             if phi_e_range[0] is not None and phi_e_range[1] is not None:
@@ -730,7 +733,7 @@ def print_4scenario_summary() -> None:
                 flush=True,
             )
 
-    # Restore defaults
+    # 恢复默认值
     CURRENT_BASIS = "network"
     CAPACITY_BASIS = "network_mass"
 

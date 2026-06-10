@@ -83,15 +83,14 @@ def nmc532_diffusion_coefficient(c_s: float, T: float = 303.0) -> float:
     对应 DERIVATION.md §2.3: "Solid lithium in NMC is neutral
     intercalated lithium. Its flux is Fickian: N_solid = -D_s(c_s,T) grad c_s."
 
-    Table II footnote (1) gives the concentration-dependent NMC532
-    diffusivity as a base-10 polynomial in ``soc``:
+    Table II 脚注 (1) 给出了浓度依赖的 NMC532 扩散系数,
+    以 soc 的 10 为底多项式表示:
 
         D_s = 10^(-2319soc^10 + 6642soc^9 - 5269soc^8 - 3319soc^7
                  + 10038soc^6 - 9806soc^5 + 5817soc^4 - 2286soc^3
                  + 575.3soc^2 - 83.16soc - 9.292)
 
-    ``T`` is accepted for API compatibility, but this printed correlation has
-    no temperature term.
+    ``T`` 参数仅为 API 兼容性而保留, 该经验公式不含温度项。
 
     Parameters
     ----------

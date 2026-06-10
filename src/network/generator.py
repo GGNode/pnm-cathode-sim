@@ -56,11 +56,22 @@ from scipy.sparse.csgraph import connected_components
 
 
 def check_percolation(net: op.network.Cubic, phase: str = "electrolyte") -> bool:
-    """Return True when a phase has a connected path from separator to collector.
+    """检查某相是否具有从隔膜到集流体的连通路径。
 
-    The x direction is treated as the electrode thickness direction: the
-    minimum-x plane is the separator side, and the maximum-x plane is the
-    current-collector side.
+    x 方向被视为电极厚度方向: 最小 x 平面为隔膜侧, 最大 x 平面为集流体侧。
+
+    Parameters
+    ----------
+    net : openpnm.network.Cubic
+        孔隙网络对象。
+    phase : str
+        要检查的相: "electrolyte"/"e" (电解质), "solid"/"s" (固相),
+        "nmc", 或 "cbd"。
+
+    Returns
+    -------
+    bool
+        若该相存在从隔膜到集流体的连通路径则返回 True。
     """
     phase_key = phase.lower()
     if phase_key in {"electrolyte", "e"}:

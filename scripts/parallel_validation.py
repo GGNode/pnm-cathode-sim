@@ -1,7 +1,7 @@
-"""Parallel multi-C-rate discharge validation.
+"""多 C-rate 并行放电验证。
 
-Runs 0.2C, 0.5C, 1C, 3C discharges in parallel using multiprocessing.
-Network: 13x13x13, spacing=10μm, matching paper 1CAL thickness ~130μm.
+使用 multiprocessing 并行运行 0.2C、0.5C、1C、3C 放电。
+网络: 13x13x13, spacing=10μm, 匹配论文 1CAL 厚度 ~130μm。
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import numpy as np
 
 @dataclass
 class RunConfig:
+    """单次放电运行的配置参数。"""
     C_rate: float
     shape: list[int]
     spacing: float
@@ -35,13 +36,13 @@ class RunConfig:
     c_s0_sol: float
     cs_max: float
     cutoff_V: float
-    current_basis: str  # "network" or "paper_areal"
-    I_1C_paper: float  # for paper_areal mode
+    current_basis: str  # "network" 或 "paper_areal"
+    I_1C_paper: float  # paper_areal 模式使用
     separator_enabled: bool
 
 
 def run_one(cfg: RunConfig) -> dict:
-    """Single C-rate discharge — runs in subprocess."""
+    """单个 C-rate 放电 — 在子进程中运行。"""
     from src.network.generator import create_cathode_network
     from src.physics.separator import SeparatorParams
     from src.solver.transient import TransientSolver
@@ -64,9 +65,9 @@ def run_one(cfg: RunConfig) -> dict:
         i_app = -cfg.C_rate * cfg.I_1C_paper
         I_1C_init = cfg.I_1C_paper
 
-    # Run discharge
+    # 运行放电
     dt = min(5.0, 50.0 / cfg.C_rate, solver.characteristic_dt(I_app=i_app, C_rate=cfg.C_rate))
-    max_time = 3.0 * 3600.0 / cfg.C_rate  # 3× nominal discharge time
+    max_time = 3.0 * 3600.0 / cfg.C_rate  # 3 倍标称放电时间
     max_steps = int(max_time / dt) + 2000
 
     pot0 = solver._steady.solve(I_app=i_app, tol=1e-8)
@@ -101,7 +102,7 @@ def run_one(cfg: RunConfig) -> dict:
 
         dt = min(dt * 1.2, 30.0)
 
-        # Early stop: voltage converged (no significant change in last 200 steps)
+        # 提前停止: 电压收敛 (最近 200 步无显著变化)
         if step_i > 200 and len(voltages) > 200:
             recent = voltages[-200:]
             if np.max(recent) - np.min(recent) < 0.005:  # <5mV variation
@@ -111,19 +112,19 @@ def run_one(cfg: RunConfig) -> dict:
     times = np.array(times)
     voltages = np.array(voltages)
 
-    # Mass loading
+    # 质量负载
     geo = solver.net["pore.volume"][solver.nmc_indices]
     nmc_vol = geo.sum()
     mass_loading = nmc_vol * 4.75e6 / geo_area  # g/m²
 
-    # Capacity in mAh/g
+    # 容量 (mAh/g)
     i_dis = abs(i_app)
     cap_ah_m2 = i_dis * times / 3600.0
     cap_mah_g = cap_ah_m2 / (mass_loading / 1000.0)
 
     reached_cutoff = voltages[-1] <= cfg.cutoff_V + 0.01
 
-    # Separator drops
+    # 隔膜损失
     sep_ohm = sep_conc = 0.0
     if cfg.separator_enabled:
         from src.physics.separator import separator_boundary, SeparatorParams as SP
@@ -147,7 +148,7 @@ def run_one(cfg: RunConfig) -> dict:
         "separator_conc_mV": round(sep_conc, 2),
         "shape": cfg.shape,
         "thickness_um": (cfg.shape[0] - 1) * cfg.spacing * 1e6,
-        # V-Q curve (downsampled)
+        # V-Q 曲线 (降采样)
         "V_curve": voltages[::max(1, len(voltages)//100)].tolist(),
         "Q_curve": cap_mah_g[::max(1, len(cap_mah_g)//100)].tolist(),
     }
@@ -201,7 +202,7 @@ def main():
 
     print(f"\nTotal wall time: {time.time()-t_total:.1f}s")
 
-    # Save
+    # 保存结果
     out = Path(ROOT / "data" / "validation")
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "parallel_results.json", "w") as f:

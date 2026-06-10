@@ -112,7 +112,7 @@ class SteadyStateSolver:
         k0 : float
             Butler-Volmer 反应速率常数。
         separator : SeparatorParams or None
-            Separator boundary model parameters.  Defaults to disabled.
+            隔膜边界模型参数。默认为禁用。
         """
         self.net = net
         self.T = T
@@ -395,7 +395,7 @@ class SteadyStateSolver:
             result = self.solve(I_app=0.0)
 
         def active_field_range(values: np.ndarray, indices: np.ndarray, active_mask: np.ndarray) -> tuple[float | None, float | None]:
-            """Get min/max of field values for active nodes only."""
+            """获取活性节点的场值最小/最大值。"""
             active_global = indices[active_mask]
             if active_global.size == 0:
                 return None, None
@@ -484,18 +484,18 @@ class SteadyStateSolver:
             np.add.at(res[:n_e], self._ie_e, rxn_flux)
             np.add.at(res[n_e:N], self._ie_s, -rxn_flux)
 
-        # Current BC on solid at collector
+        # 集流体端固相电流边界条件
         if len(self.active_cc_s) > 0:
             res[n_e + self.active_cc_s] += I_app * self._cc_area / len(self.active_cc_s)
 
-        # Dirichlet BCs: separator electrolyte
+        # Dirichlet 边界条件: 隔膜端电解质
         for i in self.sep_e:
             res[i] = phi_e[i] - self._phi_e_sep
-        # Inactive electrolyte nodes: pin to 0
+        # 非活性电解质节点: 固定为 0
         for i in range(n_e):
             if not self.active_e[i]:
                 res[i] = phi_e[i]
-        # Inactive solid nodes: pin to OCV
+        # 非活性固相节点: 固定为 OCV
         for i in range(n_s):
             if not self.active_s[i]:
                 x_i = np.clip(self.c_s[self.s_indices[i]] / 48900.0, 0.01, 0.99)
@@ -532,7 +532,7 @@ class SteadyStateSolver:
         N = n_e + n_s
         n_intf = len(self.reactive_interfaces)
 
-        # ===== Compute BV quantities at interfaces =====
+        # ===== 计算各界面的 BV 量 =====
         if n_intf > 0:
             phi_e_intf = phi_e[self._ie_e]
             phi_s_intf = phi_s[self._ie_s]
@@ -541,7 +541,7 @@ class SteadyStateSolver:
             x_j = np.clip(cs / 48900.0, 0.01, 0.99)
 
             U_eq = nmc532_ocv(x_j)
-            # Clip U_eq to physically reasonable range for NMC532
+            # 将 U_eq 限制在 NMC532 的物理合理范围内
             U_eq = np.clip(U_eq, 2.5, 4.5)
             i0 = np.array([
                 exchange_current_density(self.k0, ce[k], cs[k], 48900.0)
@@ -550,7 +550,7 @@ class SteadyStateSolver:
             eta = phi_s_intf - phi_e_intf - U_eq
             I_rxn_intf = np.array([butler_volmer(i0[k], eta[k], self.T) for k in range(n_intf)])
 
-            # Linearized BV conductance: d(I_rxn * A)/d(eta)
+            # 线性化 BV 电导: d(I_rxn * A)/d(eta)
             f_val = F / (R * self.T)
             arg_a = np.clip(0.5 * f_val * eta, -500, 500)
             arg_c = np.clip(-0.5 * f_val * eta, -500, 500)
@@ -561,25 +561,25 @@ class SteadyStateSolver:
             g_bv = np.array([])
             U_eq = np.array([])
 
-        # ===== Build residual =====
+        # ===== 构建残差 =====
         res = np.zeros(N)
 
-        # Electrolyte residual: F_e[i] = (L_e @ phi_e)[i] + Σ_r i_rxn * A_r
+        # 电解质残差: F_e[i] = (L_e @ phi_e)[i] + Σ_r i_rxn * A_r
         res[:n_e] = self.L_e @ phi_e
         if n_intf > 0:
             rxn_flux = I_rxn_intf * self._ie_A
             np.add.at(res[:n_e], self._ie_e, rxn_flux)
 
-        # Solid residual: F_s[m] = (L_s @ phi_s)[m] - Σ_r i_rxn * A_r
+        # 固相残差: F_s[m] = (L_s @ phi_s)[m] - Σ_r i_rxn * A_r
         res[n_e:N] = self.L_s @ phi_s
         if n_intf > 0:
             np.add.at(res[n_e:N], self._ie_s, -rxn_flux)
 
-        # Current BC on solid at collector
+        # 集流体端固相电流边界条件
         if len(self.active_cc_s) > 0:
             res[n_e + self.active_cc_s] += I_app * self._cc_area / len(self.active_cc_s)
 
-        # ===== Build Jacobian J using block assembly =====
+        # ===== 分块组装 Jacobian J =====
         # J = [J_ee  J_es]
         #     [J_se  J_ss]
 
@@ -597,7 +597,7 @@ class SteadyStateSolver:
             np.add.at(g_bv_s, self._ie_s, g_bv)
             J_ss = J_ss - sparse.diags(g_bv_s, 0, shape=(n_s, n_s))
 
-        # Off-diagonal coupling: J_es and J_se
+        # 非对角耦合项: J_es 和 J_se
         if n_intf > 0:
             J_es = sparse.coo_matrix(
                 (g_bv, (self._ie_e, self._ie_s)), shape=(n_e, n_s)
@@ -609,25 +609,25 @@ class SteadyStateSolver:
             J_es = sparse.csr_matrix((n_e, n_s))
             J_se = sparse.csr_matrix((n_s, n_e))
 
-        # Assemble 2x2 block Jacobian
+        # 组装 2x2 分块 Jacobian
         J = sparse.bmat([[J_ee, J_es], [J_se, J_ss]], format='csr')
 
-        # ===== Apply Dirichlet BCs =====
-        # Use diagonal masking: for BC row i, replace J[i,:] with e_i^T
+        # ===== 施加 Dirichlet 边界条件 =====
+        # 使用对角掩码: 对 BC 行 i, 将 J[i,:] 替换为 e_i^T
         # J_bc = diag(1 - mask) @ J + diag(mask)
-        # This avoids the slow lil_matrix row-zeroing.
+        # 避免缓慢的 lil_matrix 行清零操作。
 
         bc_mask = np.zeros(N)
-        # Separator electrolyte: phi_e = phi_e_sep
+        # 隔膜端电解质: phi_e = phi_e_sep
         for i in self.sep_e:
             bc_mask[i] = 1.0
             res[i] = phi_e[i] - self._phi_e_sep
-        # Inactive electrolyte nodes: pin to 0
+        # 非活性电解质节点: 固定为 0
         for i in range(n_e):
             if not self.active_e[i]:
                 bc_mask[i] = 1.0
                 res[i] = phi_e[i]
-        # Inactive solid nodes: pin to OCV
+        # 非活性固相节点: 固定为 OCV
         for i in range(n_s):
             if not self.active_s[i]:
                 bc_mask[n_e + i] = 1.0
@@ -635,8 +635,8 @@ class SteadyStateSolver:
                 U_i = np.clip(nmc532_ocv(x_i), 2.5, 4.5)
                 res[n_e + i] = phi_s[i] - U_i
 
-        # Apply: J = diag(1-mask) @ J + diag(mask)
-        # This zeros out BC rows and sets diagonal to 1
+        # 应用: J = diag(1-mask) @ J + diag(mask)
+        # 将 BC 行清零并将对角线设为 1
         keep_diag = sparse.diags(1.0 - bc_mask)
         bc_diag = sparse.diags(bc_mask)
         J = keep_diag @ J + bc_diag
@@ -714,25 +714,24 @@ class SteadyStateSolver:
                 "converged": True,
             }
 
-        # Separator boundary condition (depends on I_app and c_e)
+        # 隔膜边界条件 (取决于 I_app 和 c_e)
         self.separator_state = separator_boundary(I_app, self.T, self.separator)
         self._phi_e_sep = self.separator_state.phi_e_cathode
 
-        # Warm-start from previous solution
+        # 从上一次解热启动
         if self._phi_e_guess is not None and self._phi_e_guess.shape == (n_e,):
             phi_e = self._phi_e_guess.copy()
-            use_ramp = False  # warm-start available, no ramping needed
+            use_ramp = False  # 有热启动, 无需渐进
         else:
-            use_ramp = abs(I_app) > 1e-10  # first call: ramp from 0
+            use_ramp = abs(I_app) > 1e-10  # 首次调用: 从 0 渐进
 
         if self._phi_s_guess is not None and self._phi_s_guess.shape == (n_s,):
             phi_s = self._phi_s_guess.copy()
 
-        # ===== Current ramping (continuation method) =====
-        # On first call (no warm-start), ramp from I=0 to I_app to guide
-        # Newton toward the physically correct solution branch.
-        # Without ramping, Newton may converge to a non-physical solution
-        # where many interfaces have the wrong reaction direction.
+        # ===== 电流渐进 (延拓法) =====
+        # 首次调用 (无热启动) 时, 从 I=0 渐进到 I_app,
+        # 引导 Newton 收敛到物理正确的解分支。
+        # 不渐进的话, Newton 可能收敛到许多界面反应方向错误的非物理解。
         if use_ramp:
             n_ramp = 8
             for ramp_step in range(n_ramp):
@@ -765,7 +764,7 @@ class SteadyStateSolver:
                 phi_e = x_ramp[:n_e].copy()
                 phi_s = x_ramp[n_e:].copy()
 
-        # ===== Newton-Raphson iteration =====
+        # ===== Newton-Raphson 迭代 =====
         x = np.concatenate([phi_e, phi_s])
         converged = False
         iteration = 0
@@ -778,24 +777,24 @@ class SteadyStateSolver:
             J, res = self._build_coupled_system(phi_e_cur, phi_s_cur, I_app)
             res_norm = np.linalg.norm(res)
 
-            # Solve J @ dx = -res
+            # 求解 J @ dx = -res
             try:
                 dx = spsolve(J, -res)
             except Exception:
                 break
 
-            # Check for NaN/Inf in dx
+            # 检查 dx 中的 NaN/Inf
             if not np.all(np.isfinite(dx)):
                 break
 
-            # Backtracking line search (Armijo condition)
+            # 回溯线搜索 (Armijo 条件)
             alpha = 1.0
             dx_norm = np.max(np.abs(dx))
             for _ in range(15):
                 x_trial = x + alpha * dx
                 pe_t = x_trial[:n_e]
                 ps_t = x_trial[n_e:]
-                # Check for NaN/Inf in trial
+                # 检查试验值中的 NaN/Inf
                 if not (np.all(np.isfinite(pe_t)) and np.all(np.isfinite(ps_t))):
                     alpha *= 0.5
                     continue
@@ -807,11 +806,11 @@ class SteadyStateSolver:
 
             x_new = x + alpha * dx
 
-            # Check for NaN/Inf
+            # 检查 NaN/Inf
             if not np.all(np.isfinite(x_new)):
                 break
 
-            # Convergence check on step size
+            # 步长收敛检查
             if np.max(np.abs(alpha * dx)) < tol:
                 converged = True
                 x = x_new
@@ -819,11 +818,11 @@ class SteadyStateSolver:
 
             x = x_new
 
-        # Extract final potentials
+        # 提取最终电位
         phi_e = x[:n_e]
         phi_s = x[n_e:]
 
-        # ===== Build full-network output =====
+        # ===== 构建全网络输出 =====
         if converged:
             self._phi_e_guess = phi_e.copy()
             self._phi_s_guess = phi_s.copy()
@@ -836,10 +835,10 @@ class SteadyStateSolver:
             if self.solid_mask[g]:
                 phi_s_full[g] = phi_s[self.s_map[g]]
 
-        # Cell voltage: V_cell = phi_s(collector) - phi_e(separator)
-        # With separator enabled, the Li-metal reference is at 0 V and the
-        # separator ohmic/concentration losses are already encoded in
-        # phi_e[sep_e], so we report V = phi_s(collector).
+        # 电池电压: V_cell = phi_s(collector) - phi_e(separator)
+        # 隔膜启用时, Li 金属参考电极为 0 V,
+        # 隔膜欧姆/浓度损失已编码在 phi_e[sep_e] 中,
+        # 因此报告 V = phi_s(collector)。
         voltage_nodes = self.active_cc_s if len(self.active_cc_s) else self.cc_s
         if len(voltage_nodes) > 0 and len(self.sep_e) > 0:
             if self.separator.enabled:
@@ -849,7 +848,7 @@ class SteadyStateSolver:
         else:
             V_cell = 0.0
 
-        # Compute reaction currents for all throats
+        # 计算所有喉道的反应电流
         I_rxn_all = np.zeros(self.Nt)
         reactive_pairs = {(e_g, s_g) for e_g, s_g, _area in self.reactive_interfaces}
         for t in range(self.Nt):
