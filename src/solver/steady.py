@@ -74,6 +74,10 @@ from scipy import sparse
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import spsolve
 
+from src.physics.electrolyte import (
+    electrolyte_diffusion_coefficient,
+    electrolyte_ionic_conductivity,
+)
 from src.physics.ocv import nmc532_ocv
 from src.physics.reaction import butler_volmer, exchange_current_density, F, R
 
@@ -139,6 +143,39 @@ class SteadyStateSolver:
         self.c_e[:] = c_e
         self.c_s[:] = c_s
 
+    def _compute_electrolyte_conductance(self):
+        """Compute electrolyte throat conductance from current concentration."""
+        A = self.net["throat.area"]
+        L = self.net["throat.length"]
+
+        c_e_values = self.c_e[self.e_mask]
+        self.c_e_mean = float(np.mean(c_e_values)) if c_e_values.size else 1200.0
+        D_e = electrolyte_diffusion_coefficient(self.c_e_mean, self.T)
+        kappa = electrolyte_ionic_conductivity(self.c_e_mean, self.T)
+        self.D_e = float(D_e)
+        self.kappa = float(kappa)
+
+        p1, p2 = self.conns[:, 0], self.conns[:, 1]
+        self.G_e = np.where(self.e_mask[p1] & self.e_mask[p2], kappa * A / L, 0.0)
+
+    def _build_electrolyte_matrix(self):
+        """Build the electrolyte potential Laplacian from current G_e."""
+        er, ec, ev = [], [], []
+        for t in range(self.Nt):
+            if self.G_e[t] == 0:
+                continue
+            g1, g2 = int(self.conns[t, 0]), int(self.conns[t, 1])
+            l1, l2 = self.e_map[g1], self.e_map[g2]
+            # 非对角: +G (流入), 对角: -G (流出)
+            er += [l1, l2, l1, l2]; ec += [l2, l1, l1, l2]
+            ev += [self.G_e[t], self.G_e[t], -self.G_e[t], -self.G_e[t]]
+        self.L_e = sparse.csr_matrix((ev, (er, ec)), shape=(self.n_e, self.n_e))
+
+    def update_conductances(self):
+        """Refresh concentration-dependent electrolyte conductance and matrix."""
+        self._compute_electrolyte_conductance()
+        self._build_electrolyte_matrix()
+
     def _compute_conductances(self):
         """
         计算喉道电导。
@@ -148,8 +185,8 @@ class SteadyStateSolver:
         - 固相电子电导: G_mn^s = sigma_mn * A_mn / L_mn [S]
 
         电导率:
-        - kappa(c_e) = F² * D_e * c_e / (RT) [S/m] (Nernst-Einstein)
-          参见 DERIVATION.md §2.1
+        - kappa(c_e, T): electrolyte ionic conductivity correlation [S/m]
+        - D_e(c_e, T): electrolyte diffusion correlation [m²/s]
         - sigma_nmc = 0.01 S/m (NMC532 电子导电率)
         - sigma_cbd = 760 S/m (CBD 电子导电率)
 
@@ -160,19 +197,13 @@ class SteadyStateSolver:
         A = net["throat.area"]     # 喉道截面积 [m²]
         L = net["throat.length"]   # 喉道长度 [m]
 
-        # 电解质参数
-        D_e = 2.0e-10  # 电解质扩散系数 [m²/s]
-        # Nernst-Einstein 电导率: kappa = F² * D_e * c_e / (RT)
-        # 在 c_e=1200 mol/m³, T=298.15 K 时
-        kappa = 1200.0 * F**2 * D_e / (R * self.T)  # [S/m]
-
         # 固相导电率
         sigma_nmc, sigma_cbd = 0.01, 760.0  # [S/m]
 
         # ===== 电解质离子电导 G_e =====
         # 仅在两个端点都是电解质节点时才非零
         p1, p2 = self.conns[:, 0], self.conns[:, 1]
-        self.G_e = np.where(self.e_mask[p1] & self.e_mask[p2], kappa * A / L, 0.0)
+        self._compute_electrolyte_conductance()
 
         # ===== 固相电子电导 G_s =====
         # 仅在两个端点都是固相节点时才非零
@@ -218,16 +249,7 @@ class SteadyStateSolver:
         # ===== 电解质 Laplacian L_e =====
         # 对应 DERIVATION.md §3.3: 电解质电位残差
         # 矩阵元素: L_e[l1,l2] = G_e, L_e[l1,l1] -= G_e
-        er, ec, ev = [], [], []
-        for t in range(self.Nt):
-            if self.G_e[t] == 0:
-                continue
-            g1, g2 = int(conns[t, 0]), int(conns[t, 1])
-            l1, l2 = self.e_map[g1], self.e_map[g2]
-            # 非对角: +G (流入), 对角: -G (流出)
-            er += [l1, l2, l1, l2]; ec += [l2, l1, l1, l2]
-            ev += [self.G_e[t], self.G_e[t], -self.G_e[t], -self.G_e[t]]
-        self.L_e = sparse.csr_matrix((ev, (er, ec)), shape=(n_e, n_e))
+        self._build_electrolyte_matrix()
 
         # ===== 固相 Laplacian L_s =====
         # 对应 DERIVATION.md §3.5: 固相电位残差
@@ -682,6 +704,7 @@ class SteadyStateSolver:
                 I_ramp = I_app * (ramp_step + 1) / n_ramp
                 x_ramp = np.concatenate([phi_e, phi_s])
                 for _ in range(max_iter):
+                    self.update_conductances()
                     pe_r, ps_r = x_ramp[:n_e], x_ramp[n_e:]
                     J_r, res_r = self._build_coupled_system(pe_r, ps_r, I_ramp)
                     try:
@@ -713,6 +736,7 @@ class SteadyStateSolver:
         iteration = 0
 
         for iteration in range(max_iter):
+            self.update_conductances()
             phi_e_cur = x[:n_e]
             phi_s_cur = x[n_e:]
 

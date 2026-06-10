@@ -78,6 +78,7 @@ import openpnm as op
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
+from src.physics.electrolyte import electrolyte_diffusion_coefficient
 from src.physics.ocv import nmc532_ocv
 from src.physics.reaction import butler_volmer, exchange_current_density, F, R
 from src.physics.solid import nmc532_diffusion_coefficient
@@ -199,6 +200,8 @@ class TransientSolver:
         self.c_s[:] = c_s
         self.c_e_reservoir = c_e
         self._steady.set_concentration(c_e, c_s)
+        self._build_electrolyte_diffusion_matrix()
+        self._build_solid_diffusion_matrix()
 
     @property
     def collector_area(self) -> float:
@@ -328,7 +331,9 @@ class TransientSolver:
         # D_e,eff = D_e * epsilon^1.5 (Bruggeman 修正, porosity=0.39)
         x = self.coords[:, 0]
         length = max(float(x.max() - x.min()), 1e-12)
-        D_e = 2.0e-10 * 0.39**1.5  # [m²/s]
+        c_e_values = self.c_e[self.e_mask]
+        c_e_mean = float(np.mean(c_e_values)) if c_e_values.size else 1200.0
+        D_e = electrolyte_diffusion_coefficient(c_e_mean, self.T) * 0.39**1.5  # [m²/s]
         tau_e = length**2 / D_e
 
         # ===== 固相扩散时间 tau_s =====
@@ -388,39 +393,14 @@ class TransientSolver:
         """
         self.c_e[:] = snapshot[0]
         self.c_s[:] = snapshot[1]
+        self._build_electrolyte_diffusion_matrix()
+        self._build_solid_diffusion_matrix()
 
-    def _build_diffusion_matrices(self):
-        """
-        构建电解质和固相的扩散拉普拉斯矩阵。
-
-        对每个 e-e (电解质-电解质) 喉道:
-            K_ik = D_e,eff * A_ik / L_ik     [m³/s]
-
-        拉普拉斯矩阵 L_ce 的构建:
-            L[i,k] = +K_ik  (非对角, 正)
-            L[i,i] = -sum_k K_ik  (对角, 负)
-
-        这样 L * c 给出扩散通量:
-            (L * c)_i = sum_k K_ik * (c_k - c_i)   [mol/s]
-
-        对应 DERIVATION.md §3.1 和 §3.2。
-
-        固相扩散类似, 但使用 NMC-NMC 喉道,
-        且 D_s 依赖于浓度, 采用调和平均:
-
-            D_s,avg = 2 * D_s1 * D_s2 / (D_s1 + D_s2)
-
-        这是两点通量近似的标准做法, 保证通量连续性。
-        """
+    def _build_electrolyte_diffusion_matrix(self):
+        """Build electrolyte diffusion Laplacian using D_e(c_e)."""
         conns = self.conns
-        D_e = 2.0e-10  # 电解质扩散系数 [m²/s] (LiPF6 in EC:DMC)
-
-        # ===== 电解质扩散拉普拉斯矩阵 (n_e × n_e) =====
-        # De_eff = D_e * epsilon^1.5 (Bruggeman 修正)
-        # epsilon = 0.39 (孔隙率), b = 1.5 (Bruggeman 指数)
         A = self.net["throat.area"]     # 喉道截面积 [m²]
         L = self.net["throat.length"]   # 喉道长度 [m]
-        De_eff = D_e * 0.39**1.5        # 有效扩散系数 [m²/s]
 
         er, ec, ev = [], [], []  # 稀疏矩阵的行、列、值
         self._ee_throats = []    # 记录 (local_i, local_j, conductance)
@@ -429,6 +409,10 @@ class TransientSolver:
             # 只处理两端都是电解质的喉道
             if self.e_mask[g1] and self.e_mask[g2]:
                 l1, l2 = self.e_map[g1], self.e_map[g2]
+                D_e1 = electrolyte_diffusion_coefficient(self.c_e[g1], self.T)
+                D_e2 = electrolyte_diffusion_coefficient(self.c_e[g2], self.T)
+                D_e_avg = 2.0 * D_e1 * D_e2 / (D_e1 + D_e2 + 1e-30)
+                De_eff = D_e_avg * 0.39**1.5
                 # 扩散传导率: K = D_eff * A / L  [m³/s]
                 g_val = De_eff * A[t] / L[t]
                 # 填充 2×2 块: [l1,l2]=+K, [l2,l1]=+K, [l1,l1]=-K, [l2,l2]=-K
@@ -436,6 +420,12 @@ class TransientSolver:
                 ev += [g_val, g_val, -g_val, -g_val]
                 self._ee_throats.append((l1, l2, g_val))
         self.L_ce = sparse.csr_matrix((ev, (er, ec)), shape=(self.n_e, self.n_e))
+
+    def _build_solid_diffusion_matrix(self):
+        """Build solid diffusion Laplacian using D_s(c_s)."""
+        conns = self.conns
+        A = self.net["throat.area"]
+        L = self.net["throat.length"]
 
         # ===== 固相扩散拉普拉斯矩阵 (n_nmc × n_nmc) =====
         # 仅 NMC-NMC 喉道 (CBD 不储锂, 不参与 c_s 方程)
@@ -456,6 +446,35 @@ class TransientSolver:
                 sv += [g_val, g_val, -g_val, -g_val]
                 self._ss_throats.append((l1, l2, g_val))
         self.L_cs = sparse.csr_matrix((sv, (sr, sc)), shape=(self.n_nmc, self.n_nmc))
+
+    def _build_diffusion_matrices(self):
+        """
+        构建电解质和固相的扩散拉普拉斯矩阵。
+
+        对每个 e-e (电解质-电解质) 喉道:
+            K_ik = D_e,eff(c_e) * A_ik / L_ik     [m³/s]
+
+        拉普拉斯矩阵 L_ce 的构建:
+            L[i,k] = +K_ik  (非对角, 正)
+            L[i,i] = -sum_k K_ik  (对角, 负)
+
+        这样 L * c 给出扩散通量:
+            (L * c)_i = sum_k K_ik * (c_k - c_i)   [mol/s]
+
+        对应 DERIVATION.md §3.1 和 §3.2。
+
+        固相扩散类似, 但使用 NMC-NMC 喉道,
+        且 D_s 依赖于浓度, 采用调和平均:
+
+            D_s,avg = 2 * D_s1 * D_s2 / (D_s1 + D_s2)
+
+        这是两点通量近似的标准做法, 保证通量连续性。
+        """
+        self._build_electrolyte_diffusion_matrix()
+        self._build_solid_diffusion_matrix()
+
+        conns = self.conns
+        A = self.net["throat.area"]
 
         # ===== 孔隙/控制体体积 =====
         self._vol_e = self.net["pore.volume"][self.e_indices]    # 电解质控制体 [m³]
@@ -640,6 +659,8 @@ class TransientSolver:
         # ===== Step 6: 更新全局浓度数组 =====
         self.c_e[self.e_indices] = c_e_new
         self.c_s[self.nmc_indices] = c_s_new
+        self._build_electrolyte_diffusion_matrix()
+        self._build_solid_diffusion_matrix()
 
         return {
             "phi_e": pot["phi_e"],
