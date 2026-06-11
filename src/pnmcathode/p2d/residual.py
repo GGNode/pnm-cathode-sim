@@ -26,7 +26,11 @@ import numpy as np
 from scipy import sparse
 
 from pnmcathode.p2d.domain import MacroMesh, ParticleMesh
-from pnmcathode.p2d.kinetics import ReactionRates, butler_volmer_with_derivatives
+from pnmcathode.p2d.kinetics import (
+    ReactionRates,
+    butler_volmer_with_derivatives,
+    exchange_current_density_vec,
+)
 from pnmcathode.p2d.materials import (
     P2DParameters,
     bruggeman_conductivity_e,
@@ -247,9 +251,9 @@ def assemble_p2d_residual(
 
     残差方程:
         R_c_e:  ε_e * (c_e_new - c_e_old) / dt + (N[j] - N[j+1]) / dx - S = 0
-        R_phi_e: (i_e[j] - i_e[j+1]) / dx + a_s * i_F = 0
-        R_phi_s: (i_s[j] - i_s[j+1]) / dx - a_s * i_F = 0
-        R_c_s:  (c_s_new - c_s_old) / dt - div(J_r) = 0
+        R_phi_e: (i_e[j+1] - i_e[j]) / dx + a_s * i_F = 0
+        R_phi_s: (i_s[j+1] - i_s[j]) / dx - a_s * i_F = 0
+        R_c_s:  (c_s_new - c_s_old) / dt + div(J_r) = 0
 
     Parameters
     ----------
@@ -335,7 +339,7 @@ def assemble_p2d_residual(
         )
 
     # ===== 2. 电解质电位残差 =====
-    # R = (i_e[j] - i_e[j+1]) / dx + a_s * i_F
+    # R = (i_e[j+1] - i_e[j]) / dx + a_s * i_F
     for j in range(n_x):
         reg = macro.region_for_cell(j)
         dx_j = macro.dx[j]
@@ -372,13 +376,13 @@ def assemble_p2d_residual(
         if layout.macro_to_positive[j] >= 0:
             source = a_s * i_f_macro[j]
 
-        residual[layout.phi_e][j] = (i_e_left - i_e_right) / dx_j + source
+        residual[layout.phi_e][j] = (i_e_right - i_e_left) / dx_j + source
 
     # Potential gauge: phi_e(0) = 0 (Dirichlet)
     residual[layout.phi_e][0] = state_new.phi_e[0]
 
     # ===== 3. 固相电位残差 =====
-    # R = (i_s_left - i_s_right) / dx - a_s * i_F
+    # R = (i_s_right - i_s_left) / dx - a_s * i_F
     for p in range(n_pos):
         j = layout.positive_to_macro[p]
         dx_j = macro.dx[j]
@@ -401,7 +405,7 @@ def assemble_p2d_residual(
             # 右边界: i_s = I_app
             i_s_right = context.current_density
 
-        residual[layout.phi_s][p] = (i_s_left - i_s_right) / dx_j - a_s * i_f_macro[j]
+        residual[layout.phi_s][p] = (i_s_right - i_s_left) / dx_j - a_s * i_f_macro[j]
 
     # ===== 4. 固相颗粒扩散残差 =====
     r_faces = particle.r_faces
@@ -429,6 +433,7 @@ def assemble_p2d_residual(
             J[k] = -D_s_faces[k - 1] * (cs_new[k] - cs_new[k - 1]) / dr
 
         # 表面通量: J[R_p] = i_F / F
+        # 阳极约定下放电 i_F < 0，负的外向通量表示 Li 进入颗粒。
         J[n_r] = i_f_macro[j] / F
 
         # 通量散度
@@ -440,7 +445,7 @@ def assemble_p2d_residual(
 
         offset = layout.c_s.start + p * n_r
         residual[offset:offset + n_r] = (
-            (cs_new - cs_old) / dt - flux_div
+            (cs_new - cs_old) / dt + flux_div
         )
 
     return residual
@@ -452,10 +457,10 @@ def residual_norm(
 ) -> float:
     """计算归一化残差范数。
 
-    按变量尺度归一化:
-    - c_e: 除以 c_e_ref (1000 mol/m³)
-    - phi_e, phi_s: 除以 thermal voltage (RT/F ≈ 25.7 mV)
-    - c_s: 除以 c_s_max
+    按残差方程的物理尺度归一化:
+    - c_e: 除以 c_e_ref / dt
+    - phi_e, phi_s: 除以特征体积电流密度 [A/m³]
+    - c_s: 除以 c_s_max / dt
 
     Parameters
     ----------
@@ -471,16 +476,32 @@ def residual_norm(
     """
     layout = context.layout
     mat = context.params.material
-    T = mat.temperature
+    params = context.params
 
     c_e_ref = 1000.0  # mol/m³
-    v_thermal = 8.314462 * T / F  # V
     c_s_max = mat.active.cs_max
+    dt = max(context.dt, 1e-30)
+
+    # 电荷守恒残差单位为 A/m³，不能用电压尺度归一化。
+    # 使用外加电流在最小控制体长度上的尺度，并用平衡态 BV
+    # 交换电流体积源作为低电流工况下的数值尺度。
+    dx_min = max(float(np.min(context.macro.dx)), 1e-30)
+    applied_scale = abs(context.current_density) / dx_min
+    c_e0 = mat.electrolyte.c_init
+    c_s0 = 0.5 * c_s_max
+    i0_ref = float(exchange_current_density_vec(
+        np.array([c_e0]),
+        np.array([c_s0]),
+        c_s_max,
+        mat.kinetics,
+    ).i0[0])
+    reaction_scale = params.positive.area_density() * i0_ref
+    current_scale = max(applied_scale, reaction_scale, 1.0)
 
     scaled = residual.copy()
-    scaled[layout.c_e] /= c_e_ref
-    scaled[layout.phi_e] /= v_thermal
-    scaled[layout.phi_s] /= v_thermal
-    scaled[layout.c_s] /= c_s_max
+    scaled[layout.c_e] /= c_e_ref / dt
+    scaled[layout.phi_e] /= current_scale
+    scaled[layout.phi_s] /= current_scale
+    scaled[layout.c_s] /= c_s_max / dt
 
     return float(np.sqrt(np.mean(scaled ** 2)))

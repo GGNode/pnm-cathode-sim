@@ -106,6 +106,8 @@ def _build_sparsity_pattern(context: P2DResidualContext) -> list[set[int]]:
         # BV coupling
         p = layout.macro_to_positive[j]
         if p >= 0:
+            pattern[col].add(layout.c_e.start + j)
+            pattern[col].add(layout.phi_e.start + j)
             pattern[col].add(layout.phi_s.start + p)
             pattern[col].add(layout.c_s.start + p * n_r + n_r - 1)
 
@@ -121,6 +123,8 @@ def _build_sparsity_pattern(context: P2DResidualContext) -> list[set[int]]:
             pattern[col].add(layout.phi_e.start + j + 1)
         p = layout.macro_to_positive[j]
         if p >= 0:
+            pattern[col].add(layout.c_e.start + j)
+            pattern[col].add(layout.phi_e.start + j)
             pattern[col].add(layout.phi_s.start + p)
             pattern[col].add(layout.c_s.start + p * n_r + n_r - 1)
 
@@ -128,7 +132,10 @@ def _build_sparsity_pattern(context: P2DResidualContext) -> list[set[int]]:
     # - R_phi_s[p], R_phi_s[p-1], R_phi_s[p+1] (固相电流)
     # - R_c_s[p, n_r-1] (通过 BV 表面通量)
     for p in range(n_pos):
+        j = layout.positive_to_macro[p]
         col = layout.phi_s.start + p
+        pattern[col].add(layout.c_e.start + j)
+        pattern[col].add(layout.phi_e.start + j)
         pattern[col].add(layout.phi_s.start + p)
         if p > 0:
             pattern[col].add(layout.phi_s.start + p - 1)
@@ -182,7 +189,7 @@ def _group_columns(pattern: list[set[int]], n: int) -> list[list[int]]:
             # 检查 j 是否与组内任何列冲突
             conflict = False
             for k in group:
-                if k in pattern[j] or j in pattern[k]:
+                if pattern[j] & pattern[k]:
                     conflict = True
                     break
             if not conflict:

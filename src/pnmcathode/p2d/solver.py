@@ -353,9 +353,9 @@ class P2DSolver:
                     progress(state)
             else:
                 # 步拒绝: 缩小 dt
-                dt = max(dt * shrink, dt_min)
-                if dt < dt_min:
+                if dt <= dt_min:
                     break
+                dt = max(dt * shrink, dt_min)
 
         # 最终快照
         V_final = self.voltage(state)
