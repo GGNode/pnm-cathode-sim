@@ -312,7 +312,7 @@ class P2DSolver:
         t = 0.0
         dt_min = self.settings.dt_min
         dt_max = self.settings.dt_max
-        growth = 1.25
+        growth = 2.0
         shrink = 0.5
 
         while t < t_final:

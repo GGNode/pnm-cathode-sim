@@ -239,7 +239,7 @@ def make_khan_solver(case: P2DBenchmarkCase) -> P2DSolver:
     settings = SolverSettings(
         temperature=case.temperature,
         newton_tol=1e-8,
-        dt_max=max(case.dt_initial, 1.0),
+        dt_max=max(case.dt_initial * 10, 60.0),
     )
     kinetics = Kinetics(k0=1e-10, alpha_a=0.5, alpha_c=0.5)
 
