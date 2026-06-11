@@ -2,7 +2,7 @@
 
 **锂离子电池阴极孔网络放电仿真工具包**
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 复现论文: Khan ZA, Elkamel A, Gostick JT. *"Pore Network Modelling of Galvanostatic Discharge Behaviour of Lithium-Ion Battery Cathodes."* J. Electrochem. Soc. 168(7), 070534 (2021).

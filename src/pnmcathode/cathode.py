@@ -1,4 +1,4 @@
-"""Cathode object and network factory methods."""
+"""Cathode 对象与网络工厂方法。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pnmcathode.network.generator import create_cathode_network
 
 @dataclass
 class Cathode:
-    """Bundle cathode geometry, material models, and an OpenPNM network."""
+    """组合阴极几何、材料模型与 OpenPNM 网络。"""
 
     geometry: CathodeGeometry
     active_material: ActiveMaterial
@@ -34,7 +34,7 @@ class Cathode:
         electrolyte: Electrolyte | None = None,
         conductive_additive: ConductiveAdditive | None = None,
     ) -> "Cathode":
-        """Create a cubic synthetic cathode network."""
+        """创建合成立方阴极网络。"""
 
         from pnmcathode.materials.presets import (
             cbd_khan2021,
@@ -52,7 +52,7 @@ class Cathode:
         return cathode
 
     def build_network(self) -> Any:
-        """Generate and attach a network using the configured geometry."""
+        """按配置几何生成并绑定网络。"""
 
         net = create_cathode_network(
             shape=list(self.geometry.shape),
@@ -67,7 +67,7 @@ class Cathode:
         return net
 
     def ensure_network(self) -> Any:
-        """Return the attached network, generating it if needed."""
+        """返回已绑定网络；必要时先生成网络。"""
 
         if self.network is None:
             return self.build_network()

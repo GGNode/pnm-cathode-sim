@@ -9,8 +9,8 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.network.generator import create_cathode_network
-from src.post.analysis import (
+from pnmcathode.network.generator import create_cathode_network
+from pnmcathode.post.analysis import (
     coordination_number,
     discharge_curve,
     pore_size_distribution,

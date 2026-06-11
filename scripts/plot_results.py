@@ -25,16 +25,34 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from scripts.run_discharge import build_parser, run_simulation
+from pnmcathode import Cathode, CathodeGeometry, DischargeProtocol, Simulation, SolverSettings
 
 
 def build_plot_parser() -> argparse.ArgumentParser:
-    """构建绘图专用参数解析器 (扩展 run_discharge 的参数)。"""
-    parser = build_parser()
+    """构建绘图脚本参数解析器。"""
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.description = __doc__
-    parser.set_defaults(crate=0.2, output=ROOT / "data/discharge_0.2c.npz", max_steps=80)
+    parser.add_argument("--c-rate", type=float, default=0.2, dest="c_rate")
+    parser.add_argument("--max-steps", type=int, default=80)
+    parser.add_argument("--cutoff-voltage", type=float, default=2.5)
+    parser.add_argument("--output", type=Path, default=ROOT / "data/discharge_0.2c.npz")
     parser.add_argument("--plot-output", type=Path, default=ROOT / "data/v_q_0.2c.png")
     return parser
+
+
+def run_simulation(args: argparse.Namespace):
+    """使用 pnmcathode API 运行放电仿真。"""
+    cathode = Cathode.cubic(
+        geometry=CathodeGeometry(shape=(10, 10, 10), seed=42),
+    )
+    protocol = DischargeProtocol(
+        c_rate=args.c_rate,
+        cutoff_voltage=args.cutoff_voltage,
+        max_steps=args.max_steps,
+    )
+    result = Simulation(cathode, protocol, settings=SolverSettings()).run()
+    result.to_npz(args.output)
+    return result
 
 
 def main() -> None:
@@ -48,7 +66,7 @@ def main() -> None:
 
     # 绘制 V-Q 曲线
     fig, ax = plt.subplots(figsize=(6.0, 4.0), constrained_layout=True)
-    ax.plot(result["capacity_Ah_m2"], result["voltage"], color="#1f77b4", linewidth=2.0)
+    ax.plot(result.capacity_Ah_m2, result.voltage, color="#1f77b4", linewidth=2.0)
     ax.set_xlabel("Areal capacity [Ah/m²]")  # 面积比容量 [A·h/m²]
     ax.set_ylabel("Cell voltage [V]")          # 端电压 [V]
     ax.set_title("0.2C discharge")

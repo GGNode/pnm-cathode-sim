@@ -46,33 +46,16 @@ dev = ["pytest>=7.0", "pyyaml>=6.0"]
 Homepage = "https://github.com/pnm-lib/pnm-lib-cathode"
 Repository = "https://github.com/pnm-lib/pnm-lib-cathode"
 
-[tool.setuptools]
-packages = [
-  "pnmcathode",
-  "pnmcathode.materials",
-  "pnmcathode.network",
-  "pnmcathode.physics",
-  "pnmcathode.solver",
-  "pnmcathode.post",
-  "src",
-  "src.network",
-  "src.physics",
-  "src.solver",
-  "src.post",
-]
+[project.scripts]
+pnmcathode-discharge = "pnmcathode.cli:main"
 
 [tool.setuptools.package-dir]
-pnmcathode = "src/pnmcathode"
-"pnmcathode.materials" = "src/pnmcathode/materials"
-"pnmcathode.network" = "src/pnmcathode/network"
-"pnmcathode.physics" = "src/pnmcathode/physics"
-"pnmcathode.solver" = "src/pnmcathode/solver"
-"pnmcathode.post" = "src/pnmcathode/post"
-src = "src"
-"src.network" = "src/network"
-"src.physics" = "src/physics"
-"src.solver" = "src/solver"
-"src.post" = "src/post"
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pnmcathode*"]
+exclude = ["src*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

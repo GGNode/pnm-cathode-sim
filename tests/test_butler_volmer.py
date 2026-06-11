@@ -11,7 +11,7 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.physics.reaction import butler_volmer, exchange_current_density
+from pnmcathode.physics.reaction import butler_volmer, exchange_current_density
 
 F = 96485.3329
 R = 8.314462

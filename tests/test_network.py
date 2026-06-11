@@ -10,7 +10,7 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.network.generator import check_percolation, create_cathode_network
+from pnmcathode.network.generator import check_percolation, create_cathode_network
 
 
 class TestCathodeNetwork:

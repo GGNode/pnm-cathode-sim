@@ -11,7 +11,7 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.physics.solid import (
+from pnmcathode.physics.solid import (
     solid_diffusion_rhs,
     nmc532_diffusion_coefficient,
     discretize_spherical_particle,

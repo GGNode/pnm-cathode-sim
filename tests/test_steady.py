@@ -10,8 +10,8 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.network.generator import create_cathode_network
-from src.solver.steady import SteadyStateSolver
+from pnmcathode.network.generator import create_cathode_network
+from pnmcathode.solver.steady import SteadyStateSolver
 
 
 class TestSteadyStateSolver:
@@ -74,7 +74,7 @@ class TestSteadyStateSolver:
         result = solver.solve(I_app=-0.001)  # very small current
         V_cell = result["voltage"]
         # Should be near OCV at x=0.5 (~3.73V)
-        from src.physics.ocv import nmc532_ocv
+        from pnmcathode.physics.ocv import nmc532_ocv
         U_eq = nmc532_ocv(0.5)
         assert abs(V_cell - U_eq) < 0.1, (
             f"V_cell={V_cell:.4f}V, expected near U_eq={U_eq:.4f}V"

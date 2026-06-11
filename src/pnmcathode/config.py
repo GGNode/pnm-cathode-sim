@@ -1,4 +1,4 @@
-"""Public configuration dataclasses for cathode simulations."""
+"""阴极仿真的公共配置 dataclass。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ OcvFunction = Callable[[float], float]
 
 @dataclass(frozen=True)
 class CathodeGeometry:
-    """Synthetic cubic cathode network geometry and phase fractions."""
+    """合成立方阴极网络的几何尺寸与相体积分数。"""
 
     shape: tuple[int, int, int] = (10, 10, 10)
     spacing: float = 1e-5
@@ -43,7 +43,7 @@ class CathodeGeometry:
 
 @dataclass(frozen=True)
 class ActiveMaterial:
-    """Active solid material model."""
+    """活性固相材料模型。"""
 
     name: str
     cs_max: float
@@ -63,7 +63,7 @@ class ActiveMaterial:
 
 @dataclass(frozen=True)
 class Electrolyte:
-    """Electrolyte transport model."""
+    """电解质传输模型。"""
 
     name: str
     diffusivity: TransportFunction
@@ -85,7 +85,7 @@ class Electrolyte:
 
 @dataclass(frozen=True)
 class ConductiveAdditive:
-    """Non-active electronically conductive phase."""
+    """非活性的电子导电相。"""
 
     name: str = "CBD"
     sigma: float = 760.0
@@ -99,7 +99,7 @@ class ConductiveAdditive:
 
 @dataclass(frozen=True)
 class Kinetics:
-    """Butler-Volmer kinetic parameters."""
+    """Butler-Volmer 动力学参数。"""
 
     k0: float = 5e-10
     alpha_a: float = 0.5
@@ -116,7 +116,7 @@ class Kinetics:
 
 @dataclass(frozen=True)
 class Separator:
-    """Collapsed one-dimensional separator boundary model parameters."""
+    """折叠一维隔膜边界模型参数。"""
 
     enabled: bool = False
     thickness: float = 25e-6
@@ -151,7 +151,7 @@ class Separator:
 
 @dataclass(frozen=True)
 class DischargeProtocol:
-    """Galvanostatic discharge protocol."""
+    """恒流放电协议。"""
 
     c_rate: float
     cutoff_voltage: float = 2.5
@@ -175,7 +175,7 @@ class DischargeProtocol:
 
 @dataclass(frozen=True)
 class SolverSettings:
-    """Numerical solver controls."""
+    """数值求解器控制参数。"""
 
     temperature: float = 298.15
     dt: float | None = None

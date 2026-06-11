@@ -10,9 +10,9 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.network.generator import create_cathode_network
-from src.physics.separator import SeparatorParams, separator_boundary
-from src.solver.steady import SteadyStateSolver
+from pnmcathode.network.generator import create_cathode_network
+from pnmcathode.physics.separator import SeparatorParams, separator_boundary
+from pnmcathode.solver.steady import SteadyStateSolver
 
 
 class TestSeparatorBoundary:

@@ -10,10 +10,10 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.network.generator import create_cathode_network
-from src.physics.ocv import nmc532_ocv
-from src.physics.reaction import F
-from src.solver.transient import TransientSolver
+from pnmcathode.network.generator import create_cathode_network
+from pnmcathode.physics.ocv import nmc532_ocv
+from pnmcathode.physics.reaction import F
+from pnmcathode.solver.transient import TransientSolver
 
 
 class TestTransientSolver:

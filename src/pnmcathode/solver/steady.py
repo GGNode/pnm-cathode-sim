@@ -99,7 +99,7 @@ class SteadyStateSolver:
         T: float = 303.0,
         k0: float = 1e-10,
         separator: SeparatorParams | None = None,
-    ):
+    ) -> None:
         """
         初始化稳态求解器。
 
@@ -150,7 +150,7 @@ class SteadyStateSolver:
         self._phi_e_guess: np.ndarray | None = None
         self._phi_s_guess: np.ndarray | None = None
 
-    def set_concentration(self, c_e: float = 1200.0, c_s: float = 24450.0):
+    def set_concentration(self, c_e: float = 1200.0, c_s: float = 24450.0) -> None:
         """设置均匀浓度场。"""
         self.c_e[:] = c_e
         self.c_s[:] = c_s

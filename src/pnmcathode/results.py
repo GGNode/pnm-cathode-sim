@@ -1,4 +1,4 @@
-"""Simulation result containers and serialization helpers."""
+"""仿真结果容器与序列化辅助函数。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _metadata_default(value: Any) -> Any:
 
 @dataclass
 class DischargeResult:
-    """Typed wrapper around galvanostatic discharge output arrays."""
+    """恒流放电输出数组的类型化包装。"""
 
     time: np.ndarray
     voltage: np.ndarray
@@ -33,7 +33,7 @@ class DischargeResult:
 
     @property
     def final_capacity(self) -> float:
-        """Final areal capacity in A h m^-2."""
+        """最终面积比容量 [A h m^-2]。"""
 
         if self.capacity_Ah_m2.size == 0:
             return 0.0
@@ -46,7 +46,7 @@ class DischargeResult:
         spatial: dict[str, np.ndarray] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "DischargeResult":
-        """Build a result object from ``TransientSolver.run_discharge`` output."""
+        """从 ``TransientSolver.run_discharge`` 输出构建结果对象。"""
 
         merged_metadata: dict[str, Any] = {
             "cutoff_voltage": raw.get("cutoff_voltage"),
@@ -65,7 +65,7 @@ class DischargeResult:
         )
 
     def to_npz(self, path: str | Path) -> None:
-        """Serialize the result to a compressed NPZ file."""
+        """将结果序列化为压缩 NPZ 文件。"""
 
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -94,7 +94,7 @@ class DischargeResult:
 
     @classmethod
     def from_npz(cls, path: str | Path) -> "DischargeResult":
-        """Deserialize a result from an NPZ file written by :meth:`to_npz`."""
+        """从 :meth:`to_npz` 写出的 NPZ 文件反序列化结果。"""
 
         with np.load(Path(path), allow_pickle=False) as data:
             spatial_keys = [str(key) for key in data["spatial_keys"].tolist()]

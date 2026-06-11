@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from src.physics.electrolyte import (
+from pnmcathode.physics.electrolyte import (
     electrolyte_diffusion_coefficient,
     electrolyte_ionic_conductivity,
 )

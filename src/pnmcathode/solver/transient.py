@@ -114,7 +114,7 @@ class TransientSolver:
         k0: float = 1e-10,
         geometric_area: float | None = None,
         separator: SeparatorParams | None = None,
-    ):
+    ) -> None:
         """
         初始化瞬态求解器。
 
@@ -187,7 +187,7 @@ class TransientSolver:
         # 过滤: 只保留与稳态求解器一致的反应界面
         self._filter_reactive_interfaces()
 
-    def set_concentration(self, c_e: float = 1200.0, c_s: float = 24450.0):
+    def set_concentration(self, c_e: float = 1200.0, c_s: float = 24450.0) -> None:
         """
         设置初始/重置浓度场。
 

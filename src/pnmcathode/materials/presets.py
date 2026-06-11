@@ -1,4 +1,4 @@
-"""Named material presets used by published validation cases."""
+"""公开验证算例使用的具名材料预设。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pnmcathode.physics.solid import nmc532_diffusion_coefficient
 
 
 def nmc532_khan2021() -> ActiveMaterial:
-    """Return the NMC532 active material model used for Khan et al. 2021."""
+    """返回 Khan et al. 2021 使用的 NMC532 活性材料模型。"""
 
     return ActiveMaterial(
         name="NMC532 (Khan 2021)",
@@ -25,13 +25,13 @@ def nmc532_khan2021() -> ActiveMaterial:
 
 
 def cbd_khan2021() -> ConductiveAdditive:
-    """Return the conductive carbon/binder domain used for Khan et al. 2021."""
+    """返回 Khan et al. 2021 使用的导电碳/粘结剂域模型。"""
 
     return ConductiveAdditive(name="CBD (Khan 2021)", sigma=760.0)
 
 
 def electrolyte_khan2021() -> Electrolyte:
-    """Return the electrolyte transport model used for Khan et al. 2021."""
+    """返回 Khan et al. 2021 使用的电解质传输模型。"""
 
     return Electrolyte(
         name="LiPF6 carbonate electrolyte (Khan 2021)",
@@ -44,7 +44,7 @@ def electrolyte_khan2021() -> Electrolyte:
 
 
 def separator_khan2021(enabled: bool = True) -> Separator:
-    """Return the separator boundary model used for Khan et al. 2021."""
+    """返回 Khan et al. 2021 使用的隔膜边界模型。"""
 
     return Separator(
         enabled=enabled,

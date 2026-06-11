@@ -10,7 +10,7 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.physics.ocv import nmc532_ocv
+from pnmcathode.physics.ocv import nmc532_ocv
 
 
 class TestNMC532OCV:

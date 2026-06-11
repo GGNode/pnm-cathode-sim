@@ -117,7 +117,7 @@ class SinglePoreDischarge:
         C_rate: float = 1.0,
         k0: float = 1e-10,
         cs_max: float = 48900.0,
-    ):
+    ) -> None:
         """
         初始化单孔放电仿真器。
 

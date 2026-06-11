@@ -32,9 +32,9 @@ class TestImports:
         import yaml
         assert yaml.__version__
 
-    def test_project_import(self):
-        import src
-        assert src.__version__ == "0.1.0"
+    def test_pnmcathode_import(self):
+        import pnmcathode
+        assert pnmcathode.__version__
 
 
 class TestOpenPNMBasics:

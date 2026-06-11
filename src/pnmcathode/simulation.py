@@ -1,4 +1,4 @@
-"""High-level simulation orchestration."""
+"""高层仿真流程编排。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _separator_params(separator: Separator) -> SeparatorParams:
 
 
 class Simulation:
-    """High-level galvanostatic discharge simulation."""
+    """高层恒流放电仿真对象。"""
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class Simulation:
         }
 
     def run(self) -> DischargeResult:
-        """Run the discharge simulation and return typed results."""
+        """运行放电仿真并返回类型化结果。"""
 
         net = self.cathode.ensure_network()
         solver = TransientSolver(

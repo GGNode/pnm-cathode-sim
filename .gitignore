@@ -29,3 +29,11 @@ Thumbs.db
 data/*.hdf5
 data/*.nc
 data/*.mat
+data/*.npz
+data/tmp_*
+data/validation/*.npz
+data/validation/*.json
+data/validation/*.png
+data/*.png
+data/paper_figures/*.png
+data/.matplotlib/

@@ -28,19 +28,24 @@
 对应 DERIVATION.md：无直接对应章节（后处理/可视化）
 """
 
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
-import openpnm as op
 
-# matplotlib 可选依赖 — 无 matplotlib 时仍可运行模拟，只是不能画图
-try:
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — 导入以启用 3D 投影
-    HAS_MPL = True
-except ImportError:
-    HAS_MPL = False
+if TYPE_CHECKING:
+    import openpnm as op
 
 
-def plot_discharge_curve(result: dict, ax=None, **kwargs):
+def _pyplot() -> Any:
+    """按需导入 matplotlib.pyplot。"""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise ImportError("matplotlib is required for plotting") from exc
+    return plt
+
+
+def plot_discharge_curve(result: dict, ax: Any | None = None, **kwargs: Any) -> Any:
     """绘制放电曲线（电压 vs 容量）
 
     对应论文 Figure 5：不同 C-rate 下的 V-Q 曲线。
@@ -76,8 +81,7 @@ def plot_discharge_curve(result: dict, ax=None, **kwargs):
         result_1c = solver.run_discharge(C_rate=1.0)
         plot_discharge_curve(result_1c, ax=ax, label="1C", color="red")
     """
-    if not HAS_MPL:
-        raise ImportError("matplotlib is required for plotting")
+    plt = _pyplot()
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
@@ -91,10 +95,10 @@ def plot_discharge_curve(result: dict, ax=None, **kwargs):
 
 
 def plot_phase_map(
-    net: op.network.Cubic,
+    net: "op.network.Cubic",
     property_name: str = "pore.phase_label",
-    ax=None,
-):
+    ax: Any | None = None,
+) -> Any:
     """绘制孔网络相分布的 2D 投影图
 
     将三相孔网络（电解液=0, NMC=1, CBD=2）投影到 x-y 平面，
@@ -124,8 +128,7 @@ def plot_phase_map(
         plot_phase_map(net, "pore.phase_label")  # 三相分布
         plot_phase_map(net, "pore.volume")        # 孔体积分布
     """
-    if not HAS_MPL:
-        raise ImportError("matplotlib is required for plotting")
+    plt = _pyplot()
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 8))
@@ -145,11 +148,11 @@ def plot_phase_map(
 
 
 def plot_concentration_field(
-    net: op.network.Cubic,
+    net: "op.network.Cubic",
     c: np.ndarray,
     title: str = "Concentration",
-    ax=None,
-):
+    ax: Any | None = None,
+) -> Any:
     """绘制浓度场的 2D 空间分布图
 
     对应论文 Figure 7-8：电解液浓度和固相锂化状态的空间分布。
@@ -191,8 +194,7 @@ def plot_concentration_field(
         sol_full[nmc_mask] = solver.c_s[nmc_mask] / 48900.0
         plot_concentration_field(net, sol_full, "固相锂化状态 (SoL)")
     """
-    if not HAS_MPL:
-        raise ImportError("matplotlib is required for plotting")
+    plt = _pyplot()
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 8))

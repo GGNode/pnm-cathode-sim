@@ -11,7 +11,7 @@ Verifies:
 import numpy as np
 import pytest
 
-from src.solver.single_pore import SinglePoreDischarge
+from pnmcathode.solver.single_pore import SinglePoreDischarge
 
 
 class TestSinglePoreDischarge:
