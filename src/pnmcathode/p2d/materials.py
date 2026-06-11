@@ -112,6 +112,7 @@ def from_config(
     positive: P2DRegion,
     particle_shells: int = 20,
     area: float = 1.0,
+    n_separator_cells: int | None = None,
 ) -> P2DParameters:
     """从现有 config 对象构建 P2D 参数。
 
@@ -165,11 +166,16 @@ def from_config(
     )
 
     # 构建 separator 区域
+    sep_n_cells = (
+        n_separator_cells
+        if n_separator_cells is not None
+        else max(1, positive.n_cells // 4)
+    )
     separator_region = P2DRegion(
         name="separator",
         x_left=0.0,
         x_right=separator.thickness,
-        n_cells=max(1, positive.n_cells // 4),  # 默认 separator 单元数为 positive 的 1/4
+        n_cells=sep_n_cells,
         epsilon_e=separator.porosity,
         bruggeman_e=separator.bruggeman,
     )

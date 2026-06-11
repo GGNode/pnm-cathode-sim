@@ -203,8 +203,10 @@ def compute_fluxes(
         salt_flux[j] = D_face * (c_e[j] - c_e[j - 1]) / dx_face
 
     # ===== 电解质电流 (face-centered) =====
-
+    # Half-cell 左边界: Li metal reference → i_e[0] = I_app
+    # 右边界 (current collector): i_e[n_x] = 0 (全部电流走固相)
     i_e = np.zeros(n_x + 1)
+    i_e[0] = context.current_density  # Li metal/separator 左边界
     t_plus = mat.separator.t_plus
     c_floor = params.concentration_floor
     for j in range(1, n_x):
@@ -340,12 +342,16 @@ def assemble_p2d_residual(
 
     # ===== 2. 电解质电位残差 =====
     # R = (i_e[j+1] - i_e[j]) / dx + a_s * i_F
+    # Half-cell 左边界: i_e[0] = I_app (Li metal reference)
     for j in range(n_x):
         reg = macro.region_for_cell(j)
         dx_j = macro.dx[j]
 
         # 电流
-        i_e_left = 0.0  # 边界无电流
+        if j == 0:
+            i_e_left = context.current_density  # Li metal 左边界
+        else:
+            i_e_left = 0.0
         i_e_right = 0.0
         if j > 0:
             k_face = 2.0 * kappa_eff[j - 1] * kappa_eff[j] / (kappa_eff[j - 1] + kappa_eff[j] + 1e-30)
